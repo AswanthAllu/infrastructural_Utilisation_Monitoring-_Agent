@@ -82,7 +82,7 @@ def build_single_cpu_remediation_plan(
     rec_id = record.get("record_id", f"cpu_rec_{plan_index:04d}")
     timestamp = record.get("timestamp", "")
     hostname = record.get("hostname", "cpu-utilization-vm")
-    service_name = record.get("service_name", "unknown-service")
+    service_name = record.get("service_name") or record.get("service") or record.get("application") or hostname
     usage = float(record.get("usage_percent", 0.0))
     cores = int(record.get("cores", 1))
     per_core = record.get("per_core", [])

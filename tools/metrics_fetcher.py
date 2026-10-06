@@ -5,10 +5,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import urllib.request
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-METRICS_API_BASE_URL = os.getenv("METRICS_API_BASE_URL", "http://localhost:8080").rstrip("/")
+METRICS_API_BASE_URL = os.getenv("METRICS_API_BASE_URL", "http://20.15.164.79:8080").rstrip("/")
 HISTORY_API_URL = f"{METRICS_API_BASE_URL}/api/history"
 CURRENT_METRICS_API_URL = f"{METRICS_API_BASE_URL}/api/metrics"
 DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
@@ -98,8 +101,18 @@ def extract_metric_series(raw_history: List[Dict[str, Any]], metric_type: str = 
 
     for idx, entry in enumerate(raw_history):
         timestamp = entry.get("timestamp", "")
-        hostname = entry.get("hostname", "unknown-host")
-        service_name = entry.get("service_name", "unknown-service")
+        hostname = _first_value(entry, "hostname", "host", "vm_name", "instance_name", default="unknown-host")
+        service_name = _first_value(
+            entry,
+            "service_name",
+            "service",
+            "application",
+            "app",
+            "application_name",
+            "process_name",
+            "process",
+            default=hostname if hostname != "unknown-host" else "vm-host",
+        )
         uptime = entry.get("uptime", "")
 
         if metric_type == "cpu":
@@ -145,3 +158,12 @@ def extract_metric_series(raw_history: List[Dict[str, Any]], metric_type: str = 
             })
 
     return records
+
+
+def _first_value(record: Dict[str, Any], *keys: str, default: str = "") -> str:
+    """Return the first non-empty metadata value from a VM telemetry record."""
+    for key in keys:
+        value = record.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return default

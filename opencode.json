@@ -6,7 +6,7 @@
       "name": "My Company LiteLLM",
       "options": {
         "baseURL": "https://app-litellm-india-dev-drd9eeftfjgfbwfz.centralindia-01.azurewebsites.net",
-        "apiKey": "{env:LITELLM_API_KEY}"
+        "apiKey": "sk-3c8QeXQtIOc3F85Qa6tAig"
       },
       "models": {
         "gpt-5.6-luna": {

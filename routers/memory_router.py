@@ -1,25 +1,20 @@
 import json
 import logging
-from pathlib import Path
 from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from tools.system_agent_pipeline import process_system_memory_metrics
-from tools.metrics_fetcher import HISTORY_API_URL, fetch_metrics_history, get_latest_metrics_file, store_metrics_json
+from tools.metrics_fetcher import HISTORY_API_URL, fetch_metrics_history, store_metrics_json
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/memory", tags=["Memory / RAM Agent (Direct 3-Subagent Pipeline)"])
 
 DEFAULT_HISTORY_URL = HISTORY_API_URL
-LOCAL_METRICS_FILE = Path(__file__).resolve().parent.parent / "logs" / "system_metrics_latest.json"
 
 
 @router.get("/analyze")
 async def analyze_memory_latest_history(
-    url: str = Query(DEFAULT_HISTORY_URL, description="History telemetry endpoint URL"),
-    force_fetch: bool = Query(False, description="Fetch fresh data from the remote history endpoint"),
-    use_local_file: bool = Query(True, description="Use logs/system_metrics_latest.json as the agent input"),
 ):
     """
     Direct Memory Agent Endpoint:
@@ -31,27 +26,18 @@ async def analyze_memory_latest_history(
     6. Returns detection, root cause, and remediation.
     """
     try:
-        raw_telemetry = None
-        if use_local_file and LOCAL_METRICS_FILE.exists():
-            raw_telemetry = json.loads(LOCAL_METRICS_FILE.read_text(encoding="utf-8-sig"))
-        elif force_fetch:
-            try:
-                raw_telemetry = fetch_metrics_history(url)
-                store_metrics_json(raw_telemetry)
-            except Exception as exc:
-                logger.warning(f"Live fetch from {url} failed: {exc}, checking local cache")
-
-        if not raw_telemetry:
-            latest = get_latest_metrics_file()
-            if latest and latest.exists():
-                raw_telemetry = json.loads(latest.read_text(encoding="utf-8-sig"))
-            else:
-                raw_telemetry = fetch_metrics_history(url)
-                store_metrics_json(raw_telemetry)
+        url = HISTORY_API_URL
+        try:
+            raw_telemetry = fetch_metrics_history(url)
+            store_metrics_json(raw_telemetry)
+        except Exception as exc:
+            logger.error(f"Live fetch from {url} failed: {exc}")
+            raise HTTPException(status_code=503, detail=f"Live VM telemetry API is unavailable: {url}. Check that the VM service is running and reachable from this application.") from exc
 
         result = process_system_memory_metrics(source=raw_telemetry)
         result["source_url"] = url
-        result["source_file"] = str(LOCAL_METRICS_FILE) if use_local_file and LOCAL_METRICS_FILE.exists() else None
+        result["source_file"] = None
+        result["data_source"] = "VM telemetry API"
         return result
     except Exception as exc:
         logger.error(f"Memory Agent error: {exc}")
