@@ -100,8 +100,9 @@ def process_system_cpu_metrics(
             live_snapshot = fetch_current_metrics()
             if live_snapshot and "cpu" in live_snapshot:
                 live_cpu = live_snapshot["cpu"]
-                live_usage = float(live_cpu.get("total", current_usage))
                 live_per_core = [float(c) for c in live_cpu.get("per_core", per_core)]
+                reported_live_total = float(live_cpu.get("total", current_usage) or 0.0)
+                live_usage = (sum(live_per_core) / len(live_per_core)) if live_per_core and reported_live_total <= 0 else reported_live_total
                 timestamp = live_snapshot.get("timestamp", timestamp)
                 hostname = live_snapshot.get("hostname", hostname)
         except Exception as exc:

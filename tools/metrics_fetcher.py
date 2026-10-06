@@ -117,6 +117,9 @@ def extract_metric_series(raw_history: List[Dict[str, Any]], metric_type: str = 
 
         if metric_type == "cpu":
             cpu_info = entry.get("cpu") or {}
+            per_core = [float(c) for c in cpu_info.get("per_core", [])]
+            reported_total = float(cpu_info.get("total", 0.0) or 0.0)
+            total_usage = (sum(per_core) / len(per_core)) if per_core and reported_total <= 0 else reported_total
             records.append({
                 "record_id": f"cpu_rec_{idx+1:04d}",
                 "timestamp": timestamp,
@@ -124,9 +127,9 @@ def extract_metric_series(raw_history: List[Dict[str, Any]], metric_type: str = 
                 "service_name": service_name,
                 "uptime": uptime,
                 "metric_type": "SYSTEM_CPU_USAGE",
-                "usage_percent": float(cpu_info.get("total", 0.0)),
+                "usage_percent": total_usage,
                 "cores": int(cpu_info.get("cores", 1)),
-                "per_core": [float(c) for c in cpu_info.get("per_core", [])],
+                "per_core": per_core,
             })
         elif metric_type in ["disk", "storage"]:
             disk_info = entry.get("disk") or {}

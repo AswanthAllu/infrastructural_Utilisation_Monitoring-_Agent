@@ -41,6 +41,8 @@ async def analyze_cpu_latest_history(
         result["data_source"] = "VM telemetry API"
         return result
     except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
         logger.error(f"CPU Agent error: {exc}")
         raise HTTPException(
             status_code=500,

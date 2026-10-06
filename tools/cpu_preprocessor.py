@@ -33,9 +33,13 @@ def segregate_cpu_data(raw_telemetry: List[Dict[str, Any]]) -> List[Dict[str, An
         uptime = entry.get("uptime", "")
 
         cores = int(cpu_info.get("cores", 1))
-        total_usage = float(cpu_info.get("total", 0.0))
+        reported_total = float(cpu_info.get("total", 0.0) or 0.0)
         per_core_raw = cpu_info.get("per_core", [])
-        per_core = [float(c) for c in per_core_raw] if per_core_raw else [total_usage]
+        per_core = [float(c) for c in per_core_raw] if per_core_raw else [reported_total]
+        # Some VM snapshots report cpu.total as 0 while per_core contains the
+        # actual utilization. Use the average core utilization in that case so
+        # threshold detection reflects the real VM state.
+        total_usage = (sum(per_core) / len(per_core)) if per_core and reported_total <= 0 else reported_total
 
         saturated_cores = [i for i, c in enumerate(per_core) if c >= 99.0]
         hot_cores = [i for i, c in enumerate(per_core) if c >= 70.0 and i not in saturated_cores]

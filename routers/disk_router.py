@@ -40,6 +40,8 @@ async def analyze_disk_latest_history(
         result["data_source"] = "VM telemetry API"
         return result
     except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
         logger.error(f"Disk Agent error: {exc}")
         raise HTTPException(
             status_code=500,
