@@ -1,0 +1,19 @@
+{
+  "name": "agentecosystem",
+  "version": "1.0.0",
+  "description": "A Python-based BigQuery reliability support system built with Google ADK, FastAPI, and BigQuery metadata analysis. The project reviews recent BigQuery jobs, identifies likely reliability issues, diagnoses them, and produces remediation guidance through a multi-agent workflow.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "nodemailer": "^10.0.13"
+  }
+}
