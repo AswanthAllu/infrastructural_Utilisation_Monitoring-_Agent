@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, ArrowRight, CheckCircle2, Cpu, HardDrive, LoaderCircle, MemoryStick, Menu, RefreshCw, Server, TriangleAlert, X, XCircle } from 'lucide-react'
+import { Activity, ArrowRight, CheckCircle2, ClipboardCheck, Cpu, HardDrive, LoaderCircle, MemoryStick, Menu, RefreshCw, Server, ShieldCheck, TriangleAlert, Wrench, X, XCircle } from 'lucide-react'
 import { createRoot } from 'react-dom/client'
 import logo from '../logo.jpg'
 import './styles.css'
@@ -13,6 +13,12 @@ const pretty = value => String(value || 'READY').replaceAll('_', ' ').toLowerCas
 const severityOf = result => result?.detection?.severity || result?.diagnosis?.severity || 'READY'
 const severityClass = value => String(value || 'ready').toLowerCase()
 const usageOf = result => Number(result?.current_usage_percent ?? result?.peak_usage_percent ?? 0)
+const remediationPoints = value => {
+  if (!value) return []
+  const text = String(value).trim()
+  const points = text.split(/\n+|(?<=[.;])\s+(?=[A-Z])/).map(point => point.replace(/^[-*•\d.)]+\s*/, '').trim()).filter(Boolean)
+  return points.length ? points : [text]
+}
 
 function HealthCard({ title, value, status, icon: Icon }) {
   return <div className={`health-card ${severityClass(status)}`}><div className="health-card-title"><Icon size={19}/><strong>{title}</strong></div><div className="health-value">{value === null ? '—' : `${value.toFixed(1)}%`}</div><span className={`health-badge ${severityClass(status)}`}>{pretty(status)}</span></div>
@@ -23,10 +29,20 @@ function ResponseCard({ agent, state, result, onRun }) {
   return <article className={`response-card ${state}`}>
     <div className="response-card-head"><span className="response-icon"><Icon size={20}/></span><span className={`severity ${severityClass(severity)}`}><span/>{state === 'loading' ? 'Running' : state === 'error' ? 'Error' : pretty(severity)}</span></div>
     <h3>{agent.label}</h3><p className="agent-purpose">Monitors <strong>{agent.metric}</strong></p>
-    {state === 'loading' && <div className="response-loading"><LoaderCircle className="spin" size={18}/> Fetching live VM telemetry and analyzing it...</div>}
+    {state === 'loading' && <div className="response-loading"><LoaderCircle className="spin" size={18}/> Loading configured telemetry and analyzing each service...</div>}
     {state === 'error' && <div className="response-error"><XCircle size={15}/>{result}</div>}
     {state === 'idle' && <p className="response-muted">Ready to fetch live VM telemetry.</p>}
-    {state === 'success' && <div className="agent-result-fields"><div className="metric-pair"><div><span>Peak usage</span><strong>{result?.peak_usage_percent ?? '—'}%</strong></div><div><span>Current usage</span><strong>{result?.current_usage_percent ?? '—'}%</strong></div></div><p className="data-source"><strong>Data source:</strong> {result?.data_source || 'VM telemetry API'} · {result?.total_records_analyzed || 0} records</p><div className="plans-heading">Remediation plans</div>{plans.length ? <div className="plan-list">{plans.map((plan, index) => <div className={`plan-card severity-panel-${severityClass(plan.severity || severity)}`} key={plan.plan_id || index}><span className={`plan-severity ${severityClass(plan.severity || severity)}`}>{pretty(plan.severity || severity)}</span><div><span className="plan-label">Service</span><p className="service-name"><strong>{plan.service_name || result?.service_name || result?.hostname || 'VM host'}</strong></p></div><div><span className="plan-label">Root cause</span><p>{plan.root_cause || '—'}</p></div><div className="remediation-action"><span className="plan-label">Remediation / action required</span><p><strong>{plan.action_required || 'Continue monitoring.'}</strong></p></div>{plan.preventive_guardrail && <div><span className="plan-label">Preventive guardrail</span><p>{plan.preventive_guardrail}</p></div>}</div>)}</div> : <p className="response-muted">No remediation required.</p>}</div>}
+    {state === 'success' && <div className="agent-result-fields">
+      <div className="metric-pair"><div><span>Peak usage</span><strong>{result?.peak_usage_percent ?? '—'}%</strong></div><div><span>Current usage</span><strong>{result?.current_usage_percent ?? '—'}%</strong></div></div>
+      <p className="data-source"><strong>Data source:</strong> {result?.data_source || 'VM telemetry API'} · {result?.total_records_analyzed || 0} records</p>
+      <div className="plans-heading"><ClipboardCheck size={16}/> Remediation plans <span>{plans.length}</span></div>
+      {plans.length ? <div className="plan-list">{plans.map((plan, index) => <section className={`plan-card severity-panel-${severityClass(plan.severity || severity)}`} key={plan.plan_id || index}>
+        <div className="plan-header"><div className="plan-number">{String(index + 1).padStart(2, '0')}</div><div><span className="plan-kicker">Service remediation</span><h4>{plan.service_name || result?.service_name || result?.hostname || 'VM host'}</h4></div><span className={`plan-severity ${severityClass(plan.severity || severity)}`}>{pretty(plan.severity || severity)}</span></div>
+        <div className="plan-section"><div className="plan-section-title"><TriangleAlert size={15}/> Root cause</div><p>{plan.root_cause || '—'}</p></div>
+        <div className="plan-section remediation-action"><div className="plan-section-title"><Wrench size={15}/> Action required</div><ul className="remediation-points">{remediationPoints(plan.action_required || 'Continue monitoring.').map((point, pointIndex) => <li key={pointIndex}><strong>{point}</strong></li>)}</ul></div>
+        {plan.preventive_guardrail && <div className="plan-section guardrail"><div className="plan-section-title"><ShieldCheck size={15}/> Preventive guardrail</div><ul className="remediation-points">{remediationPoints(plan.preventive_guardrail).map((point, pointIndex) => <li key={pointIndex}>{point}</li>)}</ul></div>}
+      </section>)}</div> : <p className="response-muted">No remediation required.</p>}
+    </div>}
     <button className="agent-run-button" onClick={() => onRun(agent)} disabled={state === 'loading'}>{state === 'loading' ? <><LoaderCircle className="spin" size={14}/> Running</> : state === 'success' ? <>Refresh live data <RefreshCw size={14}/></> : <>Run {agent.key} <ArrowRight size={14}/></>}</button>
   </article>
 }

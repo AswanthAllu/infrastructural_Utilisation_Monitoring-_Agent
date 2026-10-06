@@ -160,7 +160,11 @@ def _generate_fallback_agent_response(
         "diagnosis": {
             "subagent": "diagnosis_agent",
             "diagnosis_status": "CONFIRMED" if threshold else "HEALTHY",
-            "root_cause": f"Elevated {resource_type} resource demand ({peak:.1f}%).",
+            "root_cause": (
+                f"Full {resource_type} saturation ({peak:.1f}%) is exhausting available host capacity."
+                if peak >= 99.0
+                else f"Elevated {resource_type} resource demand ({peak:.1f}%)."
+            ),
             "explanation": f"Host is operating at {peak:.1f}% capacity.",
         },
         "remediation": {

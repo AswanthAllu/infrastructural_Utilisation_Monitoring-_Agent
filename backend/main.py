@@ -49,6 +49,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Lightweight liveness endpoint for deployment and development probes."""
+    return {"status": "healthy", "service": "reliability-agent-backend"}
+
 # The Vite development server runs on a different origin during local development.
 # Keep this permissive for the local dashboard; production deployments should replace
 # it with the deployed frontend origin.

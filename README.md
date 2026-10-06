@@ -1,5 +1,31 @@
 # Reliability Agent Ecosystem
 
+## Project structure
+
+The application is separated for deployment:
+
+- `backend/` — FastAPI application, agents, services, telemetry adapters, mock data, tests, and Python dependencies.
+- `frontend/` — Vite/React dashboard.
+
+Run the backend from the `backend/` directory so package imports and local configuration resolve correctly:
+
+```bash
+cd backend
+python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload --reload-dir .
+```
+
+The backend liveness probe is available at `http://127.0.0.1:8000/health`.
+Run the command from `backend/`, not the repository root. This keeps Uvicorn's
+Windows reload worker pointed at the existing `backend/main.py` file.
+
+Run the frontend separately from the `frontend/` directory:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
 A Python-based BigQuery reliability support system built with Google ADK, FastAPI, and BigQuery metadata analysis. The project reviews recent BigQuery jobs, identifies likely reliability issues, diagnoses them, and produces remediation guidance through a multi-agent workflow.
 
 ## Overview

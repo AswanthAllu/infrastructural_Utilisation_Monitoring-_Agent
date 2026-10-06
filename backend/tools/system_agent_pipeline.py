@@ -17,6 +17,7 @@ from services.email_service import (
 )
 from services.llm_agent_service import call_llm_agent
 from tools.cpu_preprocessor import (
+    build_single_cpu_remediation_plan,
     generate_all_cpu_remediation_plans,
     save_segregated_cpu_data,
     segregate_cpu_data,
@@ -141,9 +142,18 @@ def process_system_cpu_metrics(
     remediation.setdefault("subagent", "remediation_agent")
     remediation.setdefault("status", "REMEDIATION_DRAFTED" if highest_threshold else "HEALTHY")
 
-    # If LLM returned fewer plans, supplement with deterministic multi-incident plans
-    if not remediation_plans:
-        remediation_plans = generate_all_cpu_remediation_plans(segregated_cpu, only_problematic=True)
+    # Always create one deterministic plan for every service crossing the CPU
+    # threshold. The LLM may summarize multiple services into one response,
+    # but service-level telemetry must remain visible to the user.
+    service_cpu_records = [
+        record for record in segregated_cpu
+        if float(record.get("usage_percent", 0.0)) >= 50.0
+    ]
+    service_cpu_records.sort(key=lambda record: float(record.get("usage_percent", 0.0)), reverse=True)
+    remediation_plans = [
+        build_single_cpu_remediation_plan(record, index)
+        for index, record in enumerate(service_cpu_records, 1)
+    ]
 
     # Keep the service associated with each telemetry spike visible in the response,
     # including when the LLM supplies the remediation plan.
@@ -182,7 +192,7 @@ def process_system_cpu_metrics(
         "agent": "cpu_agent",
         "resource": "CPU",
         "hostname": hostname,
-        "service_name": latest_rec.get("service_name", "unknown-service"),
+        "service_name": latest_rec.get("service_name") or latest_rec.get("hostname", "vm-host"),
         "records": segregated_cpu,
         "timestamp": timestamp,
         "peak_usage_percent": peak_usage,
@@ -408,6 +418,43 @@ def process_system_memory_metrics(
 
     remediation.setdefault("subagent", "remediation_agent")
     remediation.setdefault("status", "REMEDIATION_DRAFTED" if highest_threshold else "HEALTHY")
+    # Preserve one remediation plan for every service that crosses the memory
+    # threshold instead of collapsing all service findings into one summary.
+    service_memory_plans = []
+    for index, record in enumerate(sorted(ram_records, key=lambda item: float(item.get("usage_percent", 0.0)), reverse=True), 1):
+        service_usage = float(record.get("usage_percent", 0.0))
+        if service_usage < 50.0:
+            continue
+        service_name = record.get("service_name") or record.get("hostname", "vm-host")
+        process_name = record.get("process_name") or "unknown process"
+        service_severity = "CRITICAL" if service_usage >= 99 else ("HIGH" if service_usage >= 70 else "MEDIUM")
+        service_key = service_name.lower()
+        if "backup" in service_key or "wbengine" in process_name.lower():
+            root_cause = f"{service_name} ({process_name}) is using {service_usage:.1f}% memory, consistent with an active backup, snapshot, or backup-worker queue."
+            action_required = f"For {service_name}, inspect active backup jobs and snapshot concurrency, review backup-worker logs, reduce parallel backup jobs, and check retention staging. Restart the service only after confirming no backup is in progress."
+            guardrail = "Schedule large backups off-peak, cap concurrent backup workers, and alert when service memory exceeds 70%."
+        elif "appx" in service_key or "deployment" in service_key:
+            root_cause = f"{service_name} ({process_name}) is using {service_usage:.1f}% memory, consistent with queued package deployment or Delivery Optimization activity."
+            action_required = f"For {service_name}, inspect pending AppX deployments and Delivery Optimization cache, pause stuck deployments, review AppX deployment event logs, and restart the service during a maintenance window if memory does not fall after the queue clears."
+            guardrail = "Limit deployment concurrency, schedule package rollouts off-peak, and alert on sustained service memory above 70%."
+        elif "action1" in service_key or "agent" in service_key:
+            root_cause = f"{service_name} ({process_name}) is using {service_usage:.1f}% memory, indicating an elevated endpoint-management agent workload or possible leak."
+            action_required = f"For {service_name}, review recent policy, inventory, and software-deployment jobs, inspect agent logs, reduce scan scope or frequency, update the agent if applicable, and perform a controlled restart if usage remains high."
+            guardrail = "Stagger endpoint scans, cap agent job concurrency, and alert on sustained memory growth above 70%."
+        else:
+            root_cause = f"{service_name} ({process_name}) is using {service_usage:.1f}% of available system memory."
+            action_required = f"Inspect {service_name} working-set growth and event logs, identify the active workload, and restart or scale the service in a controlled window if usage remains elevated."
+            guardrail = "Track per-service memory growth and alert at 70% before host memory becomes constrained."
+        service_memory_plans.append({
+            "plan_id": f"REMED-RAM-{index:04d}",
+            "service_name": service_name,
+            "process_name": process_name,
+            "severity": service_severity,
+            "memory_usage_percent": service_usage,
+            "root_cause": root_cause,
+            "action_required": action_required,
+            "preventive_guardrail": guardrail,
+        })
 
     email_alerts = []
     if highest_threshold is not None:
@@ -434,12 +481,14 @@ def process_system_memory_metrics(
         "peak_usage_percent": peak_ram_usage,
         "current_usage_percent": usage_percent,
         "highest_threshold_crossed": highest_threshold,
-        "remediation_plans": [{
-            "plan_id": "REMED-RAM-001",
-            "service_name": latest.get("service_name", "unknown-service"),
-            "severity": remediation.get("severity", detection.get("severity", "LOW")),
-            "root_cause": diagnosis.get("root_cause"),
-            "action_required": remediation.get("action_required") or diagnosis.get("recommended_action"),
+        "remediation_plans": service_memory_plans or [{
+            "plan_id": "REMED-RAM-0001",
+            "service_name": latest.get("service_name") or latest.get("hostname", "vm-host"),
+            "severity": "LOW",
+            "memory_usage_percent": usage_percent,
+            "root_cause": f"No service crossed the 50% memory threshold. Current usage is {usage_percent:.1f}%.",
+            "action_required": "No immediate remediation required. Continue monitoring service memory usage.",
+            "preventive_guardrail": "Alert at 70% service memory usage and track memory growth over time.",
         }],
         "detection": detection,
         "diagnosis": diagnosis,
