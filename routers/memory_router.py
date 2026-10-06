@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from tools.system_agent_pipeline import process_system_memory_metrics
-from tools.metrics_fetcher import HISTORY_API_URL, fetch_metrics_history, store_metrics_json
+from tools.metrics_fetcher import HISTORY_API_URL, load_configured_metrics, store_metrics_json
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +28,16 @@ async def analyze_memory_latest_history(
     try:
         url = HISTORY_API_URL
         try:
-            raw_telemetry = fetch_metrics_history(url)
+            raw_telemetry, data_source = load_configured_metrics(url)
             store_metrics_json(raw_telemetry)
         except Exception as exc:
             logger.error(f"Live fetch from {url} failed: {exc}")
-            raise HTTPException(status_code=503, detail=f"Live VM telemetry API is unavailable: {url}. Check that the VM service is running and reachable from this application.") from exc
+            raise HTTPException(status_code=503, detail=f"Configured telemetry source is unavailable: {exc}") from exc
 
         result = process_system_memory_metrics(source=raw_telemetry)
         result["source_url"] = url
         result["source_file"] = None
-        result["data_source"] = "VM telemetry API"
+        result["data_source"] = data_source
         return result
     except Exception as exc:
         if isinstance(exc, HTTPException):

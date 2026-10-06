@@ -30,6 +30,7 @@ def segregate_cpu_data(raw_telemetry: List[Dict[str, Any]]) -> List[Dict[str, An
         cpu_info = entry.get("cpu") or {}
         timestamp = entry.get("timestamp", "")
         hostname = entry.get("hostname", "cpu-utilization-vm")
+        service_name = entry.get("service_name") or entry.get("service") or entry.get("application") or entry.get("process_name") or hostname
         uptime = entry.get("uptime", "")
 
         cores = int(cpu_info.get("cores", 1))
@@ -56,6 +57,7 @@ def segregate_cpu_data(raw_telemetry: List[Dict[str, Any]]) -> List[Dict[str, An
             "record_id": f"cpu_rec_{idx+1:04d}",
             "timestamp": timestamp,
             "hostname": hostname,
+            "service_name": service_name,
             "uptime": uptime,
             "metric_type": "SYSTEM_CPU_USAGE",
             "cpu": {

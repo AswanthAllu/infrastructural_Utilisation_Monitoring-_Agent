@@ -257,6 +257,36 @@ def process_system_disk_metrics(
     if live_th and (highest_threshold is None or live_th > highest_threshold):
         highest_threshold = live_th
 
+    # These records are system VM disk telemetry, not BigQuery disk logs. Keep
+    # the response grounded in the actual VM values even if an LLM returns a
+    # legacy BigQuery-oriented answer.
+    disk_severity = "CRITICAL" if usage_percent >= 99 else ("HIGH" if usage_percent >= 70 else ("MEDIUM" if usage_percent >= 50 else "LOW"))
+    detection = {
+        **detection,
+        "resource": "System Disk",
+        "metric_type": "SYSTEM_DISK_USAGE",
+        "detected": usage_percent >= 50,
+        "severity": disk_severity,
+        "summary": f"{hostname} disk usage is {usage_percent:.1f}% ({used_gb:.2f} GB used of {total_gb:.2f} GB; {free_gb:.2f} GB free).",
+    }
+    if usage_percent < 50:
+        diagnosis = {
+            **diagnosis,
+            "diagnosis_status": "HEALTHY",
+            "severity": "LOW",
+            "root_cause": f"Normal system disk utilization on {hostname}: {usage_percent:.1f}% used.",
+            "explanation": f"The VM has {free_gb:.2f} GB free out of {total_gb:.2f} GB. Capacity is currently healthy.",
+        }
+        remediation = {
+            **remediation,
+            "status": "HEALTHY",
+            "action_required": "No immediate remediation required. Continue monitoring disk growth and maintain normal log-retention policies.",
+            "preventive_guardrail": "Alert at 70% disk usage and review growth trends before capacity becomes constrained.",
+        }
+    else:
+        diagnosis["severity"] = disk_severity
+        remediation["status"] = "REMEDIATION_DRAFTED"
+
     detection.setdefault("subagent", "detection_agent")
     detection.setdefault("resource", "Disk")
     detection.setdefault("detected", highest_threshold is not None)
@@ -297,8 +327,8 @@ def process_system_disk_metrics(
         "highest_threshold_crossed": highest_threshold,
         "remediation_plans": [{
             "plan_id": "REMED-DISK-001",
-            "service_name": latest.get("service_name", "unknown-service"),
-            "severity": remediation.get("severity", detection.get("severity", "LOW")),
+            "service_name": latest.get("service_name") or latest.get("hostname", "vm-host"),
+            "severity": disk_severity,
             "root_cause": diagnosis.get("root_cause"),
             "action_required": remediation.get("action_required") or diagnosis.get("recommended_action"),
         }],

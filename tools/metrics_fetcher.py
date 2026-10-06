@@ -15,6 +15,7 @@ METRICS_API_BASE_URL = os.getenv("METRICS_API_BASE_URL", "http://20.15.164.79:80
 HISTORY_API_URL = f"{METRICS_API_BASE_URL}/api/history"
 CURRENT_METRICS_API_URL = f"{METRICS_API_BASE_URL}/api/metrics"
 DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def fetch_metrics_history(url: str = HISTORY_API_URL, timeout: int = 10) -> List[Dict[str, Any]]:
@@ -31,6 +32,18 @@ def fetch_metrics_history(url: str = HISTORY_API_URL, timeout: int = 10) -> List
         elif isinstance(data, dict):
             return [data]
         return []
+
+
+def load_configured_metrics(url: str = HISTORY_API_URL) -> tuple[List[Dict[str, Any]], str]:
+    """Load the configured mock file or fetch live VM telemetry."""
+    if os.getenv("DATA_SOURCE", "vm").strip().lower() == "mock":
+        configured_path = Path(os.getenv("MOCK_METRICS_FILE", "mock_data/windows_services_metrics.json"))
+        mock_path = configured_path if configured_path.is_absolute() else PROJECT_ROOT / configured_path
+        if not mock_path.exists():
+            raise FileNotFoundError(f"Configured mock metrics file does not exist: {mock_path}")
+        data = json.loads(mock_path.read_text(encoding="utf-8"))
+        return (data if isinstance(data, list) else [data]), f"Mock data: {mock_path.name}"
+    return fetch_metrics_history(url), "VM telemetry API"
 
 
 def fetch_current_metrics(url: str = CURRENT_METRICS_API_URL, timeout: int = 10) -> Dict[str, Any]:
