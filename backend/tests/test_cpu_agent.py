@@ -21,7 +21,8 @@ def test_agent_instances_load():
     assert disk_agent is not None
     assert disk_agent.instruction
     assert orchestrator_agent is not None
-    assert len(orchestrator_agent.sub_agents) == 2
+    # The orchestrator routes CPU, disk, and memory workloads.
+    assert len(orchestrator_agent.sub_agents) == 3
 
 
 def test_orchestrator_routing():

@@ -99,6 +99,20 @@ def orchestrate_log_analysis(input_data: str, filename: Optional[str] = None) ->
     result["designated_agent"] = designated_agent
     result["input_filename"] = filename
 
+    # Keep the established orchestrator response contract for CSV callers.
+    if "remediation_summary" not in result and "incidents" in result:
+        result["remediation_summary"] = [
+            {
+                "job_id": incident.get("job_id"),
+                "severity": incident.get("severity"),
+                "original_query": incident.get("query"),
+                "optimized_query": incident.get("remediation", {}).get("recommended_query"),
+                "recommended_action": incident.get("remediation", {}).get("action_required"),
+                "preventive_guardrail": incident.get("remediation", {}).get("preventive_guardrail"),
+            }
+            for incident in result.get("incidents", [])
+        ]
+
     return result
 
 

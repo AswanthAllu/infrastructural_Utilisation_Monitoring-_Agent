@@ -14,8 +14,118 @@ logger = logging.getLogger(__name__)
 METRICS_API_BASE_URL = os.getenv("METRICS_API_BASE_URL", "http://20.15.164.79:8080").rstrip("/")
 HISTORY_API_URL = f"{METRICS_API_BASE_URL}/api/history"
 CURRENT_METRICS_API_URL = f"{METRICS_API_BASE_URL}/api/metrics"
+PROCESSES_API_URL = f"{METRICS_API_BASE_URL}/api/processes"
+SERVICE_LOGS_API_URL = f"{METRICS_API_BASE_URL}/api/service-logs"
 DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def fetch_live_telemetry_unmerged(
+    base_url: str = METRICS_API_BASE_URL,
+    timeout: int = 10,
+    logs_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """
+    Fetches raw unmerged live telemetry directly from the 3 endpoints:
+    1. /api/metrics - Live current VM-level CPU, Disk, and RAM utilization (replaces /history as current reading).
+       Also captures the latest 5 recordings from /api/history.
+    2. /api/processes - Top 5 processes by CPU utilization.
+    3. /api/service-logs - 1 log each from 5 distinct active services.
+    Saves raw files to logs/ without merging.
+    """
+    target_dir = logs_dir or DEFAULT_LOGS_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Fetch current metrics from /api/metrics
+    try:
+        current_metrics = fetch_current_metrics(f"{base_url}/api/metrics", timeout=timeout)
+    except Exception as exc:
+        logger.warning(f"Could not fetch /api/metrics: {exc}")
+        current_metrics = {}
+
+    # Fetch latest 5 recordings from /api/history
+    try:
+        history_list = fetch_metrics_history(f"{base_url}/api/history", timeout=timeout)
+        latest_5_recordings = history_list[-5:] if len(history_list) >= 5 else history_list
+    except Exception as exc:
+        logger.warning(f"Could not fetch /api/history: {exc}")
+        latest_5_recordings = [current_metrics] if current_metrics else []
+
+    if not current_metrics and latest_5_recordings:
+        current_metrics = latest_5_recordings[-1]
+
+    # 2. Fetch processes from /api/processes -> top 5 processes
+    try:
+        proc_data = fetch_current_metrics(f"{base_url}/api/processes", timeout=timeout)
+        all_procs = proc_data.get("processes", [])
+        sorted_procs = sorted(all_procs, key=lambda p: float(p.get("cpu_percent", 0.0)), reverse=True)
+        top_5_processes = sorted_procs[:5]
+    except Exception as exc:
+        logger.warning(f"Could not fetch /api/processes: {exc}")
+        top_5_processes = []
+
+    # 3. Fetch service logs from /api/service-logs -> 5 logs from ALL distinct services (VM-independent)
+    distinct_services_logs = {}
+    all_distinct_service_logs = []
+    try:
+        logs_data = fetch_current_metrics(f"{base_url}/api/service-logs", timeout=timeout)
+        services = logs_data.get("Services", [])
+        for s in services:
+            s_name = s.get("ServiceName", "unknown")
+            desc = s.get("Description", "")
+            active_st = s.get("ActiveState", "active")
+            raw_logs = s.get("Logs", [])
+            recent_5 = raw_logs[-5:] if len(raw_logs) >= 5 else raw_logs
+            if not recent_5:
+                continue
+
+            svc_entries = []
+            for l in recent_5:
+                entry = {
+                    "service_name": s_name,
+                    "description": desc,
+                    "active_state": active_st,
+                    "timestamp": l.get("TimeGenerated", ""),
+                    "process": l.get("Process", ""),
+                    "message": l.get("Message", ""),
+                }
+                svc_entries.append(entry)
+                all_distinct_service_logs.append(entry)
+
+            distinct_services_logs[s_name] = {
+                "service_name": s_name,
+                "description": desc,
+                "active_state": active_st,
+                "logs_count": len(svc_entries),
+                "logs": svc_entries,
+            }
+    except Exception as exc:
+        logger.warning(f"Could not fetch /api/service-logs: {exc}")
+        distinct_services_logs = {}
+        all_distinct_service_logs = []
+
+    bundle = {
+        "current_metrics": current_metrics,
+        "latest_5_recordings": latest_5_recordings,
+        "top_5_processes": top_5_processes,
+        "distinct_services_logs": distinct_services_logs,
+        "all_services_logs": all_distinct_service_logs,
+        "services_logs_5": all_distinct_service_logs,
+        "distinct_services_count": len(distinct_services_logs),
+        "timestamp": current_metrics.get("timestamp", datetime.now(timezone.utc).isoformat()),
+        "hostname": current_metrics.get("hostname", "system-host"),
+    }
+
+    try:
+        (target_dir / "latest_metrics.json").write_text(json.dumps(current_metrics, indent=2), encoding="utf-8")
+        (target_dir / "latest_5_recordings.json").write_text(json.dumps(latest_5_recordings, indent=2), encoding="utf-8")
+        (target_dir / "latest_processes_5.json").write_text(json.dumps(top_5_processes, indent=2), encoding="utf-8")
+        (target_dir / "latest_distinct_services_logs.json").write_text(json.dumps(distinct_services_logs, indent=2), encoding="utf-8")
+        (target_dir / "latest_service_logs_5.json").write_text(json.dumps(all_distinct_service_logs, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.debug(f"Could not save unmerged telemetry cache: {exc}")
+
+    return bundle
 
 
 def fetch_metrics_history(url: str = HISTORY_API_URL, timeout: int = 10) -> List[Dict[str, Any]]:
@@ -138,6 +248,8 @@ def extract_metric_series(raw_history: List[Dict[str, Any]], metric_type: str = 
                 "timestamp": timestamp,
                 "hostname": hostname,
                 "service_name": service_name,
+                "process_name": entry.get("process_name") or entry.get("process"),
+                "status": entry.get("status", "unknown"),
                 "uptime": uptime,
                 "metric_type": "SYSTEM_CPU_USAGE",
                 "usage_percent": total_usage,
@@ -151,6 +263,8 @@ def extract_metric_series(raw_history: List[Dict[str, Any]], metric_type: str = 
                 "timestamp": timestamp,
                 "hostname": hostname,
                 "service_name": service_name,
+                "process_name": entry.get("process_name") or entry.get("process"),
+                "status": entry.get("status", "unknown"),
                 "uptime": uptime,
                 "metric_type": "SYSTEM_DISK_USAGE",
                 "usage_percent": float(disk_info.get("percent", 0.0)),
@@ -165,6 +279,8 @@ def extract_metric_series(raw_history: List[Dict[str, Any]], metric_type: str = 
                 "timestamp": timestamp,
                 "hostname": hostname,
                 "service_name": service_name,
+                "process_name": entry.get("process_name") or entry.get("process"),
+                "status": entry.get("status", "unknown"),
                 "uptime": uptime,
                 "metric_type": "SYSTEM_RAM_USAGE",
                 "usage_percent": float(ram_info.get("percent", 0.0)),
