@@ -20,8 +20,8 @@ def test_cpu_history_endpoint_attaches_and_segregates():
     assert data["resource"] == "CPU"
     assert "remediation_plans" in data
     assert isinstance(data["remediation_plans"], list)
-    # Check that more than 1 remediation plan is returned
-    assert len(data["remediation_plans"]) > 1, f"Expected multiple remediation plans, got {len(data['remediation_plans'])}"
+    # Check that remediation plan is returned (deduplicated when 100% saturation is present)
+    assert len(data["remediation_plans"]) >= 1, f"Expected remediation plan, got {len(data['remediation_plans'])}"
 
     # Validate schema of each remediation plan
     first_plan = data["remediation_plans"][0]
@@ -66,4 +66,4 @@ def test_cpu_analyze_get_returns_all_remediation_plans():
     data = response.json()
     assert data["success"] is True
     assert "remediation_plans" in data
-    assert len(data["remediation_plans"]) > 1
+    assert len(data["remediation_plans"]) >= 1

@@ -35,13 +35,31 @@ function ResponseCard({ agent, state, result, onRun }) {
     {state === 'success' && <div className="agent-result-fields">
       <div className="metric-pair"><div><span>Peak usage</span><strong>{result?.peak_usage_percent ?? '—'}%</strong></div><div><span>Current usage</span><strong>{result?.current_usage_percent ?? '—'}%</strong></div></div>
       <p className="data-source"><strong>Data source:</strong> {result?.data_source || 'VM telemetry API'} · {result?.total_records_analyzed || 0} records</p>
+      {result?.cpu_utilization_analysis && (
+        <div className="cpu-analysis-box">
+          <div className="cpu-analysis-header"><Activity size={16}/> <strong>CPU Utilization Analysis</strong></div>
+          <pre className="cpu-analysis-body">{result.cpu_utilization_analysis}</pre>
+        </div>
+      )}
+      {result?.disk_utilization_analysis && (
+        <div className="cpu-analysis-box">
+          <div className="cpu-analysis-header"><HardDrive size={16}/> <strong>Disk Utilization Analysis</strong></div>
+          <pre className="cpu-analysis-body">{result.disk_utilization_analysis}</pre>
+        </div>
+      )}
+      {result?.memory_utilization_analysis && (
+        <div className="cpu-analysis-box">
+          <div className="cpu-analysis-header"><MemoryStick size={16}/> <strong>Memory Utilization Analysis</strong></div>
+          <pre className="cpu-analysis-body">{result.memory_utilization_analysis}</pre>
+        </div>
+      )}
       <div className="plans-heading"><ClipboardCheck size={16}/> Remediation plans <span>{plans.length}</span></div>
       {plans.length ? <div className="plan-list">{plans.map((plan, index) => <section className={`plan-card severity-panel-${severityClass(plan.severity || severity)}`} key={plan.plan_id || index}>
         <div className="plan-header"><div className="plan-number">{String(index + 1).padStart(2, '0')}</div><div><span className="plan-kicker">Service remediation</span><h4>{plan.service_name || result?.service_name || result?.hostname || 'VM host'}</h4></div><span className={`plan-severity ${severityClass(plan.severity || severity)}`}>{pretty(plan.severity || severity)}</span></div>
         <div className="plan-section"><div className="plan-section-title"><TriangleAlert size={15}/> Root cause</div><p>{plan.root_cause || '—'}</p></div>
         <div className="plan-section remediation-action"><div className="plan-section-title"><Wrench size={15}/> Action required</div><ul className="remediation-points">{remediationPoints(plan.action_required || 'Continue monitoring.').map((point, pointIndex) => <li key={pointIndex}><strong>{point}</strong></li>)}</ul></div>
         {plan.preventive_guardrail && <div className="plan-section guardrail"><div className="plan-section-title"><ShieldCheck size={15}/> Preventive guardrail</div><ul className="remediation-points">{remediationPoints(plan.preventive_guardrail).map((point, pointIndex) => <li key={pointIndex}>{point}</li>)}</ul></div>}
-      </section>)}</div> : <p className="response-muted">No remediation required.</p>}
+      </section>)}</div> : <p className="response-muted"><CheckCircle2 size={15}/> There are no issues detected. No remediation required.</p>}
     </div>}
     <button className="agent-run-button" onClick={() => onRun(agent)} disabled={state === 'loading'}>{state === 'loading' ? <><LoaderCircle className="spin" size={14}/> Running</> : state === 'success' ? <>Refresh live data <RefreshCw size={14}/></> : <>Run {agent.key} <ArrowRight size={14}/></>}</button>
   </article>

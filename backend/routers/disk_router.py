@@ -26,29 +26,9 @@ async def analyze_disk_latest_history(
     6. Returns detection, root cause, and remediation.
     """
     try:
-        url = HISTORY_API_URL
-        try:
-            raw_telemetry, data_source = load_configured_metrics(url)
-            # Prefer the VM's current snapshot for the latest disk reading;
-            # retain history for peak/trend analysis.
-            try:
-                if data_source.startswith("Mock data:"):
-                    current_snapshot = None
-                else:
-                    current_snapshot = fetch_current_metrics(CURRENT_METRICS_API_URL)
-                if current_snapshot:
-                    raw_telemetry = [current_snapshot] + raw_telemetry
-            except Exception as current_exc:
-                logger.warning(f"Current VM snapshot unavailable; using VM history response: {current_exc}")
-            store_metrics_json(raw_telemetry)
-        except Exception as exc:
-            logger.error(f"Live fetch from {url} failed: {exc}")
-            raise HTTPException(status_code=503, detail=f"Configured telemetry source is unavailable: {exc}") from exc
-
-        result = process_system_disk_metrics(source=raw_telemetry)
-        result["source_url"] = url
+        result = process_system_disk_metrics(source=None)
+        result["source_url"] = CURRENT_METRICS_API_URL
         result["source_file"] = None
-        result["data_source"] = data_source
         return result
     except Exception as exc:
         if isinstance(exc, HTTPException):

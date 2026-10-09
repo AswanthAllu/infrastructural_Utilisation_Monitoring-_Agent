@@ -4,13 +4,13 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Form, HTTPException, Query, Request
 
 from tools.system_agent_pipeline import process_system_cpu_metrics
-from tools.metrics_fetcher import HISTORY_API_URL, load_configured_metrics, store_metrics_json
+from tools.metrics_fetcher import CURRENT_METRICS_API_URL, HISTORY_API_URL, load_configured_metrics, store_metrics_json
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/cpu", tags=["CPU Agent (Direct 3-Subagent Pipeline)"])
 
-DEFAULT_HISTORY_URL = HISTORY_API_URL
+DEFAULT_METRICS_URL = CURRENT_METRICS_API_URL
 
 
 @router.api_route("/analyze", methods=["GET", "POST"])
@@ -42,20 +42,16 @@ async def analyze_cpu_latest_history(
         else:
             source = None
 
-        url = HISTORY_API_URL
-        try:
-            raw_telemetry, data_source = load_configured_metrics(url) if source is None else (source, "request body")
-            if source is None:
-                store_metrics_json(raw_telemetry)
-        except Exception as exc:
-            logger.error(f"Live fetch from {url} failed: {exc}")
-            raise HTTPException(status_code=503, detail=f"Configured telemetry source is unavailable: {exc}") from exc
+        if source is not None:
+            result = process_system_cpu_metrics(source=source)
+            result["source_url"] = "custom_input"
+            result["source_file"] = None
+            result["data_source"] = "request body"
+            return result
 
-        # Runs CPU Agent: CPU data segregation -> LLM decision -> single highest threshold email
-        result = process_system_cpu_metrics(source=raw_telemetry)
-        result["source_url"] = url
+        result = process_system_cpu_metrics(source=None)
+        result["source_url"] = CURRENT_METRICS_API_URL
         result["source_file"] = None
-        result["data_source"] = data_source
         return result
     except Exception as exc:
         if isinstance(exc, HTTPException):
@@ -70,11 +66,9 @@ async def analyze_cpu_latest_history(
 @router.get("/history")
 async def analyze_cpu_history(force_fetch: bool = Query(False)):
     """Backward-compatible alias for the direct CPU history analysis endpoint."""
-    raw_telemetry, data_source = load_configured_metrics(HISTORY_API_URL)
-    result = process_system_cpu_metrics(source=raw_telemetry)
-    result["source_url"] = HISTORY_API_URL
+    result = process_system_cpu_metrics(source=None)
+    result["source_url"] = CURRENT_METRICS_API_URL
     result["source_file"] = None
-    result["data_source"] = data_source
     return result
 
 
@@ -89,4 +83,27 @@ async def get_segregated_cpu_data():
         "success": True,
         "data_source": data_source,
         "segregated_cpu_records": records,
+    }
+
+
+@router.get("/merged-data")
+async def get_merged_cpu_data():
+    """Return the 30 merged records fusing history, processes, and service logs."""
+    from tools.data_merger import merge_telemetry_data
+    merged = merge_telemetry_data(limit=30)
+    return {
+        "success": True,
+        "count": len(merged),
+        "merged_records": merged,
+    }
+
+
+@router.get("/unmerged-data")
+async def get_unmerged_telemetry():
+    """Return the unmerged telemetry bundle: current_metrics, latest_5_recordings, top_5_processes, services_logs_5."""
+    from tools.metrics_fetcher import fetch_live_telemetry_unmerged
+    bundle = fetch_live_telemetry_unmerged()
+    return {
+        "success": True,
+        "bundle": bundle,
     }

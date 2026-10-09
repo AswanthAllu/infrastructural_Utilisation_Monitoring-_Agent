@@ -129,6 +129,22 @@ def build_single_cpu_remediation_plan(
         preventive_guardrail = (
             "Implement thread pool executor with thread-affinity rotation and set per-core alert at 95%."
         )
+    elif usage >= 90.0:
+        severity = "CRITICAL"
+        priority = 1
+        root_cause = f"Critical CPU utilization: Peak reached {usage:.1f}% (Exceeded 90% threshold)."
+        diagnosis = (
+            f"Host {hostname} CPU is operating at critical levels ({usage:.1f}%). "
+            f"System latency is elevated and compute headroom is near exhaustion."
+        )
+        action_required = (
+            f"1. Scale host '{hostname}' compute resources or add worker replicas.\n"
+            f"2. Inspect top CPU consumers via `top -b -n 1 -H` or `pidstat -u 1 3`.\n"
+            f"3. Throttle batch background processing until CPU drops below 80%."
+        )
+        preventive_guardrail = (
+            "Set proactive alert threshold at 85% CPU and configure automated scale-out triggers."
+        )
     elif usage >= 70.0:
         severity = "HIGH"
         priority = 2
@@ -194,22 +210,42 @@ def generate_all_cpu_remediation_plans(
     only_problematic: bool = True,
 ) -> List[Dict[str, Any]]:
     """
-    Iterates through segregated CPU records and produces an individualized remediation plan
-    for every problematic CPU record (or all records if only_problematic=False).
-    Ensures that if there are multiple problematic records, ALL remediation plans
-    are returned in the API response.
+    Produces remediation plans for CPU records exceeding the 90% threshold.
+    If 100% CPU utilization is present, emits only 1 consolidated plan for 100% saturation.
+    Deduplicates records across services to avoid repetitive time-series snapshot plans.
     """
     plans: List[Dict[str, Any]] = []
-    plan_counter = 1
 
-    for record in segregated_cpu_records:
-        is_problematic = record.get("is_anomaly", False) or float(record.get("usage_percent", 0.0)) >= 50.0
-        if only_problematic and not is_problematic:
-            continue
+    if only_problematic:
+        candidate_records = [
+            r for r in segregated_cpu_records
+            if float(r.get("usage_percent", 0.0)) > 90.0
+        ]
+    else:
+        candidate_records = list(segregated_cpu_records)
 
-        plan = build_single_cpu_remediation_plan(record, plan_counter)
-        plans.append(plan)
-        plan_counter += 1
+    candidate_records.sort(key=lambda r: float(r.get("usage_percent", 0.0)), reverse=True)
+
+    selected_records = []
+    has_100_percent_plan = False
+    seen_services = set()
+
+    for record in candidate_records:
+        usage = float(record.get("usage_percent", 0.0))
+        svc = record.get("service_name") or record.get("hostname", "cpu-utilization-vm")
+
+        if usage >= 99.0:
+            if not has_100_percent_plan:
+                selected_records.append(record)
+                has_100_percent_plan = True
+                seen_services.add(svc)
+        else:
+            if svc not in seen_services:
+                selected_records.append(record)
+                seen_services.add(svc)
+
+    for plan_counter, record in enumerate(selected_records, 1):
+        plans.append(build_single_cpu_remediation_plan(record, plan_counter))
 
     return plans
 
