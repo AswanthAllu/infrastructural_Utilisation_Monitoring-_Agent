@@ -426,6 +426,7 @@ def build_memory_utilization_analysis_text(metrics_payload: Any) -> str:
         corr_svc = logs_5[0] if logs_5 else {}
         corr_time = _fmt_time(corr_svc.get("timestamp", curr_fmt))
         corr_name = corr_svc.get("service_name") or "system-memory.service"
+        corr_msg = corr_svc.get("message") or "Active service memory operations"
         # If memory is normal (no issues detected)
         if curr_p < 70.0:
             lines = [

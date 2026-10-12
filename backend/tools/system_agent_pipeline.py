@@ -167,6 +167,13 @@ def process_system_cpu_metrics(
     elif eval_usage >= 50.0 and (highest_threshold is None or highest_threshold < 50):
         highest_threshold = 50
 
+    cpu_severity = (
+        "CRITICAL" if highest_threshold == 100
+        else "HIGH" if highest_threshold == 70
+        else "MEDIUM" if highest_threshold == 50
+        else "LOW"
+    )
+
     if highest_threshold is None:
         detection["subagent"] = "detection_agent"
         detection["resource"] = "CPU"
@@ -188,9 +195,9 @@ def process_system_cpu_metrics(
         detection.setdefault("resource", "CPU")
         detection.setdefault("detected", True)
         detection.setdefault("crossed_thresholds", [th for th in [100, 70, 50] if highest_threshold >= th])
-        detection.setdefault("severity", "CRITICAL" if highest_threshold == 100 else ("HIGH" if highest_threshold == 70 else "MEDIUM"))
+        detection["severity"] = cpu_severity
         diagnosis.setdefault("subagent", "diagnosis_agent")
-        diagnosis.setdefault("severity", detection.get("severity"))
+        diagnosis["severity"] = cpu_severity
         diagnosis.setdefault("diagnosis_status", "CONFIRMED")
         remediation.setdefault("subagent", "remediation_agent")
         remediation.setdefault("status", "REMEDIATION_DRAFTED")
@@ -318,6 +325,13 @@ def process_system_disk_metrics(
     elif max_d >= 50.0:
         highest_threshold = 50
 
+    disk_severity = (
+        "CRITICAL" if highest_threshold == 100
+        else "HIGH" if highest_threshold == 70
+        else "MEDIUM" if highest_threshold == 50
+        else "LOW"
+    )
+
     if highest_threshold is None:
         detection = {
             "subagent": "detection_agent",
@@ -353,13 +367,13 @@ def process_system_disk_metrics(
             "summary": f"{hostname} disk usage reached {current_usage:.1f}% ({used_gb:.2f} GB used of {total_gb:.2f} GB).",
         }
         diagnosis.setdefault("subagent", "diagnosis_agent")
-        diagnosis.setdefault("severity", disk_severity)
+        diagnosis["severity"] = disk_severity
         diagnosis.setdefault("diagnosis_status", "CONFIRMED")
         remediation.setdefault("subagent", "remediation_agent")
         remediation.setdefault("status", "REMEDIATION_DRAFTED")
 
     remediation_plans = []
-    if highest_threshold:
+    if highest_threshold is not None and highest_threshold >= 70:
         remediation_plans.append({
             "plan_id": "REMED-DISK-001",
             "service_name": top_5_procs[0].get("process_name") if top_5_procs else hostname,
@@ -425,8 +439,16 @@ def process_system_memory_metrics(
     bundle = _resolve_telemetry_bundle(source)
     current_metrics = bundle.get("current_metrics") or {}
     latest_5 = bundle.get("latest_5_recordings") or []
-    top_5_procs = bundle.get("top_5_processes") or []
+    top_5_procs = bundle.get("top_5_memory_processes") or bundle.get("top_5_processes") or []
     services_logs_5 = bundle.get("services_logs_5") or []
+
+    # /api/processes is ordered by CPU, so explicitly order this list by RAM
+    # before selecting the processes shown by the memory agent.
+    top_memory_procs = sorted(
+        top_5_procs,
+        key=lambda process: float(process.get("memory_percent", 0.0) or 0.0),
+        reverse=True,
+    )
 
     hostname = current_metrics.get("hostname", "cpu-utilization-vm")
     timestamp = current_metrics.get("timestamp", "")
@@ -454,12 +476,82 @@ def process_system_memory_metrics(
 
     highest_threshold = None
     max_ram = max(current_usage, peak_ram_usage)
-    if max_ram >= 100.0:
-        highest_threshold = 100
+    if max_ram >= 90.0:
+        highest_threshold = 90
     elif max_ram >= 70.0:
         highest_threshold = 70
     elif max_ram >= 50.0:
         highest_threshold = 50
+
+    mem_severity = (
+        "CRITICAL" if highest_threshold == 90
+        else "HIGH" if highest_threshold == 70
+        else "MEDIUM" if highest_threshold == 50
+        else "LOW"
+    )
+    primary_process = top_memory_procs[0] if top_memory_procs else {}
+    service_name = (
+        primary_process.get("service_name")
+        or primary_process.get("process_name")
+        or primary_process.get("name")
+        or hostname
+    )
+    high_memory_services = []
+    for event in services_logs_5:
+        service_memory = event.get("memory_percent", event.get("memory_usage_percent"))
+        service_rss = event.get("memory_rss_mb", event.get("rss_mb"))
+        if service_memory is None and service_rss is None:
+            continue
+        high_memory_services.append({
+            "service_name": event.get("service_name", "unknown-service"),
+            "memory_percent": service_memory,
+            "memory_rss_mb": service_rss,
+            "active_state": event.get("active_state", "unknown"),
+        })
+    high_memory_services.sort(
+        key=lambda service: float(service.get("memory_percent", 0.0) or 0.0),
+        reverse=True,
+    )
+
+    remediation_steps = []
+    if max_ram >= 70.0:
+        primary_name = primary_process.get("process_name") or primary_process.get("name") or service_name
+        primary_pid = primary_process.get("pid", "unknown")
+        primary_rss = float(primary_process.get("memory_rss_mb", 0.0) or 0.0)
+        primary_percent = float(primary_process.get("memory_percent", 0.0) or 0.0)
+        remediation_steps = [
+            f"Inspect {primary_name} (PID {primary_pid}); it is the largest reported RAM consumer at {primary_percent:.2f}% ({primary_rss:.1f} MB RSS).",
+            f"Check {primary_name} logs, child processes, and RSS over the next few samples for a memory leak or an unexpected workload increase.",
+            f"Reduce concurrency or workload for {primary_name}; restart it during a maintenance window if RSS continues to increase or available RAM keeps falling.",
+            f"Keep at least 15% RAM available ({total_gb * 0.15:.2f} GB on this host); escalate to the on-call immediately if usage reaches 90% or available RAM falls below that level.",
+        ]
+        remediation["status"] = "REMEDIATION_DRAFTED"
+        remediation["action_required"] = " ".join(f"{i + 1}. {step}" for i, step in enumerate(remediation_steps[:3]))
+        remediation["preventive_guardrail"] = remediation_steps[3]
+        diagnosis["root_cause"] = (
+            f"RAM utilization is {max_ram:.1f}%, above the 70% operational threshold. "
+            f"{primary_name} (PID {primary_pid}) is the largest reported RAM consumer."
+        )
+
+    if max_ram >= 70.0:
+        primary_name = primary_process.get("process_name") or primary_process.get("name") or service_name
+        primary_pid = primary_process.get("pid", "unknown")
+        primary_rss = float(primary_process.get("memory_rss_mb", 0.0) or 0.0)
+        remediation["status"] = "REMEDIATION_DRAFTED"
+        remediation["action_required"] = (
+            f"1. Inspect {primary_name} (PID {primary_pid}); it is using {primary_rss:.1f} MB RSS. "
+            "2. Check for continuously increasing memory and inspect child processes. "
+            "3. Reduce the workload or restart the affected service during a maintenance window if RAM continues to rise."
+        )
+        remediation["preventive_guardrail"] = (
+            "1. Keep RAM below 70% during normal operation. "
+            "2. Alert at 70% and escalate to the on-call at 90%. "
+            f"3. Track {primary_name} RSS and investigate sustained growth or a memory leak."
+        )
+        diagnosis["root_cause"] = (
+            f"RAM utilization is {max_ram:.1f}%, above the 70% operational threshold. "
+            f"{primary_name} (PID {primary_pid}) is the largest reported RAM consumer."
+        )
 
     if highest_threshold is None:
         detection["subagent"] = "detection_agent"
@@ -481,7 +573,7 @@ def process_system_memory_metrics(
         detection.setdefault("subagent", "detection_agent")
         detection.setdefault("resource", "RAM")
         detection.setdefault("detected", True)
-        detection.setdefault("crossed_thresholds", [th for th in [100, 70, 50] if highest_threshold >= th])
+        detection.setdefault("crossed_thresholds", [th for th in [90, 70, 50] if highest_threshold >= th])
         detection.setdefault("severity", mem_severity)
         diagnosis.setdefault("subagent", "diagnosis_agent")
         diagnosis.setdefault("severity", mem_severity)
@@ -490,16 +582,16 @@ def process_system_memory_metrics(
         remediation.setdefault("status", "REMEDIATION_DRAFTED")
 
     remediation_plans = []
-    if highest_threshold:
-        primary_svc_name = top_5_procs[0].get("process_name") if top_5_procs else hostname
+    if highest_threshold is not None and highest_threshold >= 70:
+        primary_svc_name = primary_process.get("process_name") or hostname
         remediation_plans.append({
             "plan_id": "REMED-RAM-0001",
             "service_name": primary_svc_name,
             "severity": mem_severity,
             "memory_usage_percent": max_ram,
             "root_cause": diagnosis.get("root_cause") or f"Memory usage reached {max_ram:.1f}%",
-            "action_required": remediation.get("action_required") or "Monitor memory allocation and inspect working sets.",
-            "preventive_guardrail": remediation.get("preventive_guardrail") or "Set proactive memory alert at 70%.",
+            "action_required": remediation["action_required"],
+            "preventive_guardrail": remediation["preventive_guardrail"],
         })
 
     email_alerts = []
@@ -521,7 +613,20 @@ def process_system_memory_metrics(
         "agent": "memory_agent",
         "resource": "RAM",
         "hostname": hostname,
-        "service_name": top_5_procs[0].get("process_name") if top_5_procs else hostname,
+        "service_name": service_name,
+        "memory_stats": {
+            "service_name": service_name,
+            "hostname": hostname,
+            "current_percent": round(current_usage, 1),
+            "peak_percent": round(peak_ram_usage, 1),
+            "used_gb": round(used_gb, 2),
+            "available_gb": round(available_gb, 2),
+            "total_gb": round(total_gb, 2),
+            "threshold_crossed": highest_threshold,
+            "primary_process": primary_process,
+        },
+        "high_memory_processes": top_memory_procs,
+        "high_memory_services": high_memory_services,
         "memory_utilization_analysis": memory_analysis,
         "total_records_analyzed": len(latest_5),
         "data_source": "VM live /api/metrics (latest 5 recordings)",
@@ -531,6 +636,8 @@ def process_system_memory_metrics(
         "current_usage_percent": round(current_usage, 1),
         "highest_threshold_crossed": highest_threshold,
         "remediation_plans": remediation_plans,
+        "remediation_points": [plan["action_required"] for plan in remediation_plans],
+        "remediation_steps": remediation_steps,
         "detection": detection,
         "diagnosis": diagnosis,
         "remediation": remediation,

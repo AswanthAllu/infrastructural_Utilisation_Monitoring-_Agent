@@ -10,7 +10,18 @@ const agents = [
   { key: 'memory', label: 'Memory utilization agent', icon: MemoryStick, metric: 'RAM utilization', endpoint: '/api/memory/analyze' },
 ]
 const pretty = value => String(value || 'READY').replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, x => x.toUpperCase())
-const severityOf = result => result?.detection?.severity || result?.diagnosis?.severity || 'READY'
+const severityOf = result => {
+  if (!result) return 'READY'
+  const usage = Number(result.current_usage_percent ?? result.peak_usage_percent)
+  if (Number.isFinite(usage)) {
+    if (result.resource === 'RAM') return usage >= 90 ? 'CRITICAL' : usage >= 70 ? 'HIGH' : usage >= 50 ? 'MEDIUM' : 'LOW'
+    if (usage >= 100) return 'CRITICAL'
+    if (usage >= 70) return 'HIGH'
+    if (usage >= 50) return 'MEDIUM'
+    return 'LOW'
+  }
+  return result?.detection?.severity || result?.diagnosis?.severity || 'READY'
+}
 const severityClass = value => String(value || 'ready').toLowerCase()
 const usageOf = result => Number(result?.current_usage_percent ?? result?.peak_usage_percent ?? 0)
 const remediationPoints = value => {
@@ -19,6 +30,7 @@ const remediationPoints = value => {
   const points = text.split(/\n+|(?<=[.;])\s+(?=[A-Z])/).map(point => point.replace(/^[-*•\d.)]+\s*/, '').trim()).filter(Boolean)
   return points.length ? points : [text]
 }
+const formatMetric = value => value === null || value === undefined || value === '' ? '—' : value
 
 function HealthCard({ title, value, status, icon: Icon }) {
   return <div className={`health-card ${severityClass(status)}`}><div className="health-card-title"><Icon size={19}/><strong>{title}</strong></div><div className="health-value">{value === null ? '—' : `${value.toFixed(1)}%`}</div><span className={`health-badge ${severityClass(status)}`}>{pretty(status)}</span></div>
@@ -33,6 +45,7 @@ function ResponseCard({ agent, state, result, onRun }) {
     {state === 'error' && <div className="response-error"><XCircle size={15}/>{result}</div>}
     {state === 'idle' && <p className="response-muted">Ready to fetch live VM telemetry.</p>}
     {state === 'success' && <div className="agent-result-fields">
+      {agent.key === 'memory' ? <MemoryDetails result={result} /> : <div className="non-memory-details">
       <div className="metric-pair"><div><span>Peak usage</span><strong>{result?.peak_usage_percent ?? '—'}%</strong></div><div><span>Current usage</span><strong>{result?.current_usage_percent ?? '—'}%</strong></div></div>
       <p className="data-source"><strong>Data source:</strong> {result?.data_source || 'VM telemetry API'} · {result?.total_records_analyzed || 0} records</p>
       {result?.cpu_utilization_analysis && (
@@ -47,12 +60,6 @@ function ResponseCard({ agent, state, result, onRun }) {
           <pre className="cpu-analysis-body">{result.disk_utilization_analysis}</pre>
         </div>
       )}
-      {result?.memory_utilization_analysis && (
-        <div className="cpu-analysis-box">
-          <div className="cpu-analysis-header"><MemoryStick size={16}/> <strong>Memory Utilization Analysis</strong></div>
-          <pre className="cpu-analysis-body">{result.memory_utilization_analysis}</pre>
-        </div>
-      )}
       <div className="plans-heading"><ClipboardCheck size={16}/> Remediation plans <span>{plans.length}</span></div>
       {plans.length ? <div className="plan-list">{plans.map((plan, index) => <section className={`plan-card severity-panel-${severityClass(plan.severity || severity)}`} key={plan.plan_id || index}>
         <div className="plan-header"><div className="plan-number">{String(index + 1).padStart(2, '0')}</div><div><span className="plan-kicker">Service remediation</span><h4>{plan.service_name || result?.service_name || result?.hostname || 'VM host'}</h4></div><span className={`plan-severity ${severityClass(plan.severity || severity)}`}>{pretty(plan.severity || severity)}</span></div>
@@ -60,9 +67,38 @@ function ResponseCard({ agent, state, result, onRun }) {
         <div className="plan-section remediation-action"><div className="plan-section-title"><Wrench size={15}/> Action required</div><ul className="remediation-points">{remediationPoints(plan.action_required || 'Continue monitoring.').map((point, pointIndex) => <li key={pointIndex}><strong>{point}</strong></li>)}</ul></div>
         {plan.preventive_guardrail && <div className="plan-section guardrail"><div className="plan-section-title"><ShieldCheck size={15}/> Preventive guardrail</div><ul className="remediation-points">{remediationPoints(plan.preventive_guardrail).map((point, pointIndex) => <li key={pointIndex}>{point}</li>)}</ul></div>}
       </section>)}</div> : <p className="response-muted"><CheckCircle2 size={15}/> There are no issues detected. No remediation required.</p>}
-    </div>}
+      </div>}</div>}
     <button className="agent-run-button" onClick={() => onRun(agent)} disabled={state === 'loading'}>{state === 'loading' ? <><LoaderCircle className="spin" size={14}/> Running</> : state === 'success' ? <>Refresh live data <RefreshCw size={14}/></> : <>Run {agent.key} <ArrowRight size={14}/></>}</button>
   </article>
+}
+
+function MemoryDetails({ result }) {
+  const stats = result.memory_stats || {}, process = stats.primary_process || {}
+  const processes = (result.high_memory_processes || []).slice(0, 5)
+  const services = (result.high_memory_services || []).slice(0, 5)
+  const backendPoints = Array.isArray(result.remediation_steps) && result.remediation_steps.length
+    ? result.remediation_steps
+    : (result.remediation_points || []).flatMap(remediationPoints)
+  const primaryName = process.process_name || process.name || stats.service_name || 'highest-memory process'
+  const threshold = Number(stats.threshold_crossed)
+  const usage = Number(stats.current_percent ?? result.current_usage_percent ?? 0)
+  const remediationRequired = threshold >= 70 || usage >= 70
+  const points = remediationRequired && backendPoints.length === 0
+    ? [`Inspect ${primaryName} (PID ${formatMetric(process.pid)}) and check for a memory leak or continuously increasing RSS.`, `Reduce the workload or restart ${primaryName} during a maintenance window if RAM continues to rise.`, 'Keep RAM below 70% during normal operation; escalate to the on-call at 90%.']
+    : backendPoints
+  return <div className="memory-details">
+    <div className="memory-stats-grid">
+      <div><span>Current RAM</span><strong>{formatMetric(stats.current_percent)}%</strong></div>
+      <div><span>Peak RAM</span><strong>{formatMetric(stats.peak_percent)}%</strong></div>
+      <div><span>Used RAM</span><strong>{formatMetric(stats.used_gb)} GB</strong></div>
+      <div><span>Available RAM</span><strong>{formatMetric(stats.available_gb)} GB</strong></div>
+      <div><span>Total RAM</span><strong>{formatMetric(stats.total_gb)} GB</strong></div>
+      <div><span>Threshold</span><strong>{stats.threshold_crossed ? `${stats.threshold_crossed}%` : 'Within limit'}</strong></div>
+    </div>
+    {processes.length > 0 && <div className="primary-process"><div className="cpu-analysis-header memory-subheading"><Activity size={15}/> <strong>Highest RAM processes</strong></div><div className="memory-usage-list">{processes.map((item, index) => <div className="usage-row" key={`${item.pid || item.process_name}-${index}`}><strong>{item.process_name || item.name || 'Unknown process'}</strong><span>PID {formatMetric(item.pid)}</span><b>{formatMetric(item.memory_percent)}%</b><span>RSS {formatMetric(item.memory_rss_mb)} MB</span></div>)}</div></div>}
+    {services.length > 0 && <div className="primary-process"><div className="cpu-analysis-header memory-subheading"><Server size={15}/> <strong>Highest RAM services</strong></div><div className="memory-usage-list">{services.map((item, index) => <div className="usage-row" key={`${item.service_name}-${index}`}><strong>{item.service_name}</strong><span>{item.active_state}</span><b>{formatMetric(item.memory_percent)}%</b><span>RSS {formatMetric(item.memory_rss_mb)} MB</span></div>)}</div></div>}
+    {remediationRequired && points.length > 0 && <div className="memory-remediation"><div className="cpu-analysis-header memory-subheading"><Wrench size={15}/> <strong>Remediation plans</strong></div><ul className="remediation-points">{points.map((point, index) => <li key={index}>{point}</li>)}</ul></div>}
+  </div>
 }
 
 function App() {

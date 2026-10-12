@@ -28,14 +28,19 @@ Each merged record contains:
 
 ## 2. Analysis & Synthesis Requirements
 
-Analyze the telemetry to evaluate whether an issue exists:
-- **Condition A: When there are NO issues** (RAM utilization is healthy, < 70%, with adequate available memory):
+Analyze the telemetry to evaluate whether an issue exists. Use these exact RAM severity bands:
+- **LOW**: below 50%
+- **MEDIUM**: 50% to 69.9%
+- **HIGH**: 70% to 89.9%
+- **CRITICAL**: 90% to 100%
+
+- **Condition A: When there are NO issues** (RAM utilization is healthy, below 50%, with adequate available memory):
   1. Display recent memory utilization details (usage percentage, used GB, available GB, total GB, and observation window).
   2. Display related process-level data for **ONLY the main primary process** (process name, PID, memory percentage, RSS MB, and thread count if present).
   3. Clearly and explicitly state that **there are no issues detected**.
   4. Set `remediation_plans` to an empty list `[]`, and remediation action to `"No issues detected. No remediation required."`.
 
-- **Condition B: When there ARE issues / causes** (RAM utilization is elevated or crossed operational thresholds >= 70% or 100%):
+- **Condition B: When there ARE issues / causes** (RAM utilization is elevated or crossed operational thresholds >= 50%):
   1. **Identify the RAM Utilization Window**: Determine starting and peak RAM utilization percentage, used RAM, and available RAM across the observation window.
   2. **Isolate Primary Consumer**: Identify the primary process driving RAM consumption, PID, memory percentage, and RSS MB. If the process has a thread count present, display it directly under the metric.
   3. **Correlate Service Events**: Trace back the specific service event, heap allocation, or daemon restart from the service logs corresponding to that timestamp.
@@ -46,6 +51,12 @@ Analyze the telemetry to evaluate whether an issue exists:
 ---
 
 ## 3. Required Output Format
+
+For the user-facing memory response, return only these sections:
+1. **RAM summary**: current usage, peak usage, used RAM, available RAM, total RAM, and threshold.
+2. **Highest RAM processes**: show only processes with the highest `memory_percent` / RSS usage.
+3. **Highest RAM services**: show only services for which memory usage telemetry is available, ordered by usage.
+4. **Remediation**: provide short, practical bullet points tied to the listed process or service. Do not include general analysis, timestamps, supporting evidence, confidence, root-cause prose, data-source details, record counts, or unrelated CPU/disk information in the user-facing response.
 
 ### A. When There Are NO Issues (Healthy State)
 Your response must include a top-level string field `memory_analysis` formatted strictly as:
@@ -156,4 +167,7 @@ JSON ecosystem block for issue state:
 
 ## 4. Remediation Plan Policies
 - **Zero-Plan Rule for No Issues**: When memory utilization is healthy / no issues (< 70%), `remediation_plans` must be strictly empty (`[]`).
-- **Threshold Rule**: Remediation plans are only generated when memory utilization reaches or exceeds threshold levels (>= 70%).
+- **Threshold Rule**: Remediation plans are generated when memory utilization reaches or exceeds 70%.
+- **Severity Rule**: 50% is MEDIUM, 70% is HIGH, and 90% is CRITICAL. Do not classify 90% RAM as HIGH.
+- **Readable remediation rule**: Write `action_required` and `preventive_guardrail` as short, numbered or bulleted steps. Each step must state one practical action in plain language, identify the responsible service/process where possible, and explain the expected outcome. Avoid vague advice such as "optimize memory" without a concrete next step.
+- **Structured service and RAM rule**: Always identify the primary service/process by name and report current percentage, peak percentage, used GB, available GB, total GB, and the crossed threshold as separate values whenever telemetry provides them. 

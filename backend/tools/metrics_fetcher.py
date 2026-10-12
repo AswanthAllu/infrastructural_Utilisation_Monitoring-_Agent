@@ -60,9 +60,15 @@ def fetch_live_telemetry_unmerged(
         all_procs = proc_data.get("processes", [])
         sorted_procs = sorted(all_procs, key=lambda p: float(p.get("cpu_percent", 0.0)), reverse=True)
         top_5_processes = sorted_procs[:5]
+        top_5_memory_processes = sorted(
+            all_procs,
+            key=lambda p: float(p.get("memory_percent", 0.0) or 0.0),
+            reverse=True,
+        )[:5]
     except Exception as exc:
         logger.warning(f"Could not fetch /api/processes: {exc}")
         top_5_processes = []
+        top_5_memory_processes = []
 
     # 3. Fetch service logs from /api/service-logs -> 5 logs from ALL distinct services (VM-independent)
     distinct_services_logs = {}
@@ -85,6 +91,8 @@ def fetch_live_telemetry_unmerged(
                     "service_name": s_name,
                     "description": desc,
                     "active_state": active_st,
+                    "memory_percent": l.get("memory_percent", s.get("memory_percent", s.get("MemoryPercent"))),
+                    "memory_rss_mb": l.get("memory_rss_mb", s.get("memory_rss_mb", s.get("MemoryRssMb"))),
                     "timestamp": l.get("TimeGenerated", ""),
                     "process": l.get("Process", ""),
                     "message": l.get("Message", ""),
@@ -108,6 +116,7 @@ def fetch_live_telemetry_unmerged(
         "current_metrics": current_metrics,
         "latest_5_recordings": latest_5_recordings,
         "top_5_processes": top_5_processes,
+        "top_5_memory_processes": top_5_memory_processes,
         "distinct_services_logs": distinct_services_logs,
         "all_services_logs": all_distinct_service_logs,
         "services_logs_5": all_distinct_service_logs,
