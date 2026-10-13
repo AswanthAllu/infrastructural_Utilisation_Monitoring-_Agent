@@ -14,8 +14,7 @@ DEFAULT_METRICS_URL = CURRENT_METRICS_API_URL
 
 
 @router.get("/analyze")
-async def analyze_memory_latest_history(
-):
+def analyze_memory_latest_history():
     """
     Direct Memory Agent Endpoint:
     1. Calls http://20.15.164.79:8080/api/metrics to ingest live current memory data, plus 5 recordings from /api/history.

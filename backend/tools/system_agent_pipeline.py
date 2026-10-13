@@ -28,6 +28,7 @@ from tools.metrics_fetcher import (
     extract_metric_series,
     fetch_current_metrics,
     fetch_live_telemetry_unmerged,
+    filter_latest_records_by_timestamp,
     get_latest_metrics_file,
 )
 
@@ -74,8 +75,8 @@ def _resolve_telemetry_bundle(
     else:
         items = []
 
-    latest_item = items[-1] if items else {}
-    latest_5 = items[-5:] if len(items) >= 5 else items
+    latest_5 = filter_latest_records_by_timestamp(items, count=5) if items else []
+    latest_item = latest_5[-1] if latest_5 else {}
     return {
         "current_metrics": latest_item,
         "latest_5_recordings": latest_5,
@@ -196,9 +197,14 @@ def process_system_cpu_metrics(
         detection.setdefault("detected", True)
         detection.setdefault("crossed_thresholds", [th for th in [100, 70, 50] if highest_threshold >= th])
         detection["severity"] = cpu_severity
+        if not detection.get("summary") or "0.0%" in detection.get("summary", "") or "No issues detected" in detection.get("summary", ""):
+            detection["summary"] = f"CPU utilization reached {eval_usage:.1f}% (current: {current_usage:.1f}%). Exceeded threshold tier: {highest_threshold}%."
         diagnosis.setdefault("subagent", "diagnosis_agent")
         diagnosis["severity"] = cpu_severity
         diagnosis.setdefault("diagnosis_status", "CONFIRMED")
+        if not diagnosis.get("root_cause") or "0.0%" in diagnosis.get("root_cause", "") or "No issues detected" in diagnosis.get("root_cause", ""):
+            primary_proc = top_5_procs[0].get("process_name") if top_5_procs else hostname
+            diagnosis["root_cause"] = f"Elevated CPU utilization ({eval_usage:.1f}%) exceeding the {highest_threshold}% threshold, driven primarily by {primary_proc}."
         remediation.setdefault("subagent", "remediation_agent")
         remediation.setdefault("status", "REMEDIATION_DRAFTED")
 
@@ -397,6 +403,14 @@ def process_system_disk_metrics(
             recipient_email=recipient_email,
         ))
 
+    disk_evidence = {
+        "used_gb": round(used_gb, 2),
+        "free_gb": round(free_gb, 2),
+        "total_gb": round(total_gb, 2),
+        "percent": round(current_usage, 1),
+    }
+    detection["evidence"] = disk_evidence
+
     return {
         "success": True,
         "agent": "disk_agent",
@@ -411,6 +425,15 @@ def process_system_disk_metrics(
         "peak_usage_percent": round(peak_disk_usage, 1),
         "current_usage_percent": round(current_usage, 1),
         "highest_threshold_crossed": highest_threshold,
+        "disk_stats": {
+            "hostname": hostname,
+            "current_percent": round(current_usage, 1),
+            "peak_percent": round(peak_disk_usage, 1),
+            "used_gb": round(used_gb, 2),
+            "free_gb": round(free_gb, 2),
+            "total_gb": round(total_gb, 2),
+            "threshold_crossed": highest_threshold,
+        },
         "remediation_plans": remediation_plans,
         "detection": detection,
         "diagnosis": diagnosis,
@@ -575,9 +598,13 @@ def process_system_memory_metrics(
         detection.setdefault("detected", True)
         detection.setdefault("crossed_thresholds", [th for th in [90, 70, 50] if highest_threshold >= th])
         detection.setdefault("severity", mem_severity)
+        if not detection.get("summary") or "0.0%" in detection.get("summary", "") or "No issues detected" in detection.get("summary", ""):
+            detection["summary"] = f"RAM utilization reached {max_ram:.1f}% ({used_gb:.2f} GB of {total_gb:.2f} GB used). Exceeded threshold tier: {highest_threshold}%."
         diagnosis.setdefault("subagent", "diagnosis_agent")
         diagnosis.setdefault("severity", mem_severity)
         diagnosis.setdefault("diagnosis_status", "CONFIRMED")
+        if not diagnosis.get("root_cause") or "0.0%" in diagnosis.get("root_cause", "") or "No issues detected" in diagnosis.get("root_cause", ""):
+            diagnosis["root_cause"] = f"Elevated RAM usage ({max_ram:.1f}%) crossed the {highest_threshold}% threshold with {available_gb:.2f} GB available of {total_gb:.2f} GB."
         remediation.setdefault("subagent", "remediation_agent")
         remediation.setdefault("status", "REMEDIATION_DRAFTED")
 
@@ -607,6 +634,14 @@ def process_system_memory_metrics(
             remediation_summary=remediation.get("action_required"),
             recipient_email=recipient_email,
         ))
+    ram_evidence = {
+        "used_gb": round(used_gb, 2),
+        "available_gb": round(available_gb, 2),
+        "free_gb": round(available_gb, 2),
+        "total_gb": round(total_gb, 2),
+        "percent": round(current_usage, 1),
+    }
+    detection["evidence"] = ram_evidence
 
     return {
         "success": True,

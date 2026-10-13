@@ -406,7 +406,7 @@ def build_memory_utilization_analysis_text(metrics_payload: Any) -> str:
         top_procs = metrics_payload.get("top_5_processes") or []
         logs_5 = metrics_payload.get("services_logs_5") or []
 
-        ram_info = current_m.get("ram") or {}
+        ram_info = current_m.get("ram") or current_m.get("memory") or current_m.get("ram_metrics") or {}
         curr_p = float(ram_info.get("percent", 0.0) or 0.0)
         used_gb = float(ram_info.get("used_gb", 0.0) or 0.0)
         avail_gb = float(ram_info.get("available_gb", 0.0) or 0.0)
@@ -747,20 +747,49 @@ def _generate_fallback_agent_response(
     is_memory = res_upper in ["RAM", "MEMORY"] or "memory" in agent_name.lower()
 
     peak = 0.0
-    if isinstance(metrics_payload, list) and metrics_payload:
+    current_val = 0.0
+
+    if isinstance(metrics_payload, dict) and "current_metrics" in metrics_payload:
+        cur_m = metrics_payload.get("current_metrics") or {}
+        latest_5 = metrics_payload.get("latest_5_recordings") or [cur_m]
         if is_disk:
-            peak = max([float(m.get("disk_metrics", {}).get("percent", m.get("usage_percent", 0.0))) for m in metrics_payload if isinstance(m, dict)] or [0.0])
+            disk_info = cur_m.get("disk") or cur_m.get("disk_metrics") or {}
+            current_val = float(disk_info.get("percent", 0.0) or 0.0)
+            recent = [float((r.get("disk") or r.get("disk_metrics") or {}).get("percent", current_val) or current_val) for r in latest_5]
+            peak = max([current_val] + recent) if recent else current_val
         elif is_memory:
-            peak = max([float(m.get("ram_metrics", {}).get("percent", m.get("usage_percent", 0.0))) for m in metrics_payload if isinstance(m, dict)] or [0.0])
+            ram_info = cur_m.get("ram") or cur_m.get("memory") or cur_m.get("ram_metrics") or {}
+            current_val = float(ram_info.get("percent", 0.0) or 0.0)
+            recent = [float((r.get("ram") or r.get("memory") or r.get("ram_metrics") or {}).get("percent", current_val) or current_val) for r in latest_5]
+            peak = max([current_val] + recent) if recent else current_val
         else:
-            peak = max([float(m.get("cpu_metrics", {}).get("total_percent", m.get("usage_percent", m.get("total", 0.0)))) for m in metrics_payload if isinstance(m, dict)] or [0.0])
+            cpu_info = cur_m.get("cpu") or cur_m.get("cpu_metrics") or {}
+            current_val = float(cpu_info.get("total", cpu_info.get("total_percent", 0.0)) or 0.0)
+            recent = [float((r.get("cpu") or r.get("cpu_metrics") or {}).get("total", (r.get("cpu") or {}).get("total_percent", current_val)) or current_val) for r in latest_5]
+            peak = max([current_val] + recent) if recent else current_val
+    elif isinstance(metrics_payload, list) and metrics_payload:
+        if is_disk:
+            peak = max([float(m.get("disk_metrics", {}).get("percent", (m.get("disk") or {}).get("percent", m.get("usage_percent", 0.0)))) for m in metrics_payload if isinstance(m, dict)] or [0.0])
+            current_val = peak
+        elif is_memory:
+            peak = max([float(m.get("ram_metrics", {}).get("percent", (m.get("ram") or m.get("memory") or {}).get("percent", m.get("usage_percent", 0.0)))) for m in metrics_payload if isinstance(m, dict)] or [0.0])
+            current_val = peak
+        else:
+            peak = max([float(m.get("cpu_metrics", {}).get("total_percent", (m.get("cpu") or {}).get("total", m.get("usage_percent", 0.0)))) for m in metrics_payload if isinstance(m, dict)] or [0.0])
+            current_val = peak
     elif isinstance(metrics_payload, dict):
         if is_disk:
-            peak = float(metrics_payload.get("disk_metrics", {}).get("percent", metrics_payload.get("usage_percent", 0.0)))
+            disk_info = metrics_payload.get("disk") or metrics_payload.get("disk_metrics") or {}
+            peak = float(disk_info.get("percent", metrics_payload.get("usage_percent", 0.0)))
+            current_val = peak
         elif is_memory:
-            peak = float(metrics_payload.get("ram_metrics", {}).get("percent", metrics_payload.get("usage_percent", 0.0)))
+            ram_info = metrics_payload.get("ram") or metrics_payload.get("memory") or metrics_payload.get("ram_metrics") or {}
+            peak = float(ram_info.get("percent", metrics_payload.get("usage_percent", 0.0)))
+            current_val = peak
         else:
-            peak = float(metrics_payload.get("cpu_metrics", {}).get("total_percent", metrics_payload.get("usage_percent", 0.0)))
+            cpu_info = metrics_payload.get("cpu") or metrics_payload.get("cpu_metrics") or {}
+            peak = float(cpu_info.get("total", cpu_info.get("total_percent", metrics_payload.get("usage_percent", 0.0))))
+            current_val = peak
 
     threshold = 100 if peak >= 99.0 else (70 if peak >= 70.0 else (50 if peak >= 50.0 else None))
     severity = "CRITICAL" if threshold == 100 else ("HIGH" if threshold == 70 else ("MEDIUM" if threshold == 50 else "LOW"))

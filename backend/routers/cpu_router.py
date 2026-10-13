@@ -14,7 +14,7 @@ DEFAULT_METRICS_URL = CURRENT_METRICS_API_URL
 
 
 @router.api_route("/analyze", methods=["GET", "POST"])
-async def analyze_cpu_latest_history(
+def analyze_cpu_latest_history(
     request: Request,
     text: Optional[str] = Form(None),
 ):
@@ -49,9 +49,11 @@ async def analyze_cpu_latest_history(
             result["data_source"] = "request body"
             return result
 
+        logger.info(f"📥 [CPU Agent] /api/cpu/analyze request received! Fetching VM telemetry from {CURRENT_METRICS_API_URL}...")
         result = process_system_cpu_metrics(source=None)
         result["source_url"] = CURRENT_METRICS_API_URL
         result["source_file"] = None
+        logger.info(f"📤 [CPU Agent] Completed! Host: {result.get('hostname')} | Current CPU: {result.get('current_usage_percent')}% | Records: {result.get('total_records_analyzed')}")
         return result
     except Exception as exc:
         if isinstance(exc, HTTPException):

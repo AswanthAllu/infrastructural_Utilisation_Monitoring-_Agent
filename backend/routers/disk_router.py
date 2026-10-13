@@ -14,8 +14,7 @@ DEFAULT_HISTORY_URL = HISTORY_API_URL
 
 
 @router.get("/analyze")
-async def analyze_disk_latest_history(
-):
+def analyze_disk_latest_history():
     """
     Direct Disk Agent Endpoint:
     1. Calls http://20.15.164.79:8080/api/history to ingest the telemetry history.

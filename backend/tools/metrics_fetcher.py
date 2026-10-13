@@ -20,15 +20,28 @@ DEFAULT_LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def filter_latest_records_by_timestamp(records: List[Dict[str, Any]], count: int = 5) -> List[Dict[str, Any]]:
+    """Sort records chronologically by their timestamp field ascending and return the latest `count` records."""
+    if not records:
+        return []
+
+    def _ts_key(item: Dict[str, Any]) -> str:
+        return str(item.get("timestamp") or "")
+
+    sorted_records = sorted(records, key=_ts_key)
+    return sorted_records[-count:] if len(sorted_records) >= count else sorted_records
+
+
 def fetch_live_telemetry_unmerged(
     base_url: str = METRICS_API_BASE_URL,
     timeout: int = 10,
     logs_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """
-    Fetches raw unmerged live telemetry directly from the 3 endpoints:
-    1. /api/metrics - Live current VM-level CPU, Disk, and RAM utilization (replaces /history as current reading).
-       Also captures the latest 5 recordings from /api/history.
+    Fetches raw unmerged live telemetry directly from the endpoints:
+    1. /api/metrics - Live current VM-level CPU, Disk, and RAM utilization.
+       Falls back to latest timestamp record in /api/history if unavailable.
+       Captures the latest 5 recordings from /api/history using timestamp-based filtering.
     2. /api/processes - Top 5 processes by CPU utilization.
     3. /api/service-logs - 1 log each from 5 distinct active services.
     Saves raw files to logs/ without merging.
@@ -43,10 +56,10 @@ def fetch_live_telemetry_unmerged(
         logger.warning(f"Could not fetch /api/metrics: {exc}")
         current_metrics = {}
 
-    # Fetch latest 5 recordings from /api/history
+    # Fetch and filter latest 5 recordings from /api/history based on timestamp
     try:
         history_list = fetch_metrics_history(f"{base_url}/api/history", timeout=timeout)
-        latest_5_recordings = history_list[-5:] if len(history_list) >= 5 else history_list
+        latest_5_recordings = filter_latest_records_by_timestamp(history_list, count=5)
     except Exception as exc:
         logger.warning(f"Could not fetch /api/history: {exc}")
         latest_5_recordings = [current_metrics] if current_metrics else []
@@ -54,14 +67,19 @@ def fetch_live_telemetry_unmerged(
     if not current_metrics and latest_5_recordings:
         current_metrics = latest_5_recordings[-1]
 
-    # 2. Fetch processes from /api/processes -> top 5 processes
+    # 2. Fetch processes from /api/processes -> top 5 processes (excluding System Idle Process)
     try:
         proc_data = fetch_current_metrics(f"{base_url}/api/processes", timeout=timeout)
         all_procs = proc_data.get("processes", [])
-        sorted_procs = sorted(all_procs, key=lambda p: float(p.get("cpu_percent", 0.0)), reverse=True)
+        # Exclude PID 0 (System Idle Process) which represents unused/idle CPU on Windows
+        workload_procs = [
+            p for p in all_procs
+            if p.get("pid") not in (0, "0", None) and str(p.get("process_name", "")).lower() != "system idle process"
+        ]
+        sorted_procs = sorted(workload_procs, key=lambda p: float(p.get("cpu_percent", 0.0)), reverse=True)
         top_5_processes = sorted_procs[:5]
         top_5_memory_processes = sorted(
-            all_procs,
+            workload_procs,
             key=lambda p: float(p.get("memory_percent", 0.0) or 0.0),
             reverse=True,
         )[:5]

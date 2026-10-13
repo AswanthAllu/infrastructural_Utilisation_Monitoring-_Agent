@@ -1,9 +1,15 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger("backend")
 
 from routers.incident_router import router as incident_router
 from routers.cpu_router import router as cpu_router
@@ -13,14 +19,11 @@ from routers.metrics_router import router as metrics_router
 from routers.orchestrator_router import router as orchestrator_router
 from tools.metrics_fetcher import fetch_metrics_history, store_metrics_json
 
-logger = logging.getLogger(__name__)
-
 
 async def periodic_metrics_poller(interval_seconds: int = 300):
-    """Periodically fetches http://20.15.164.79:8080/api/history every 5 minutes and saves to logs/."""
+    """Periodically fetches telemetry history every 5 minutes and saves to logs/."""
     while True:
         try:
-            # Run blocking urllib in executor so it doesn't block event loop
             loop = asyncio.get_running_loop()
             data = await loop.run_in_executor(None, fetch_metrics_history)
             saved = await loop.run_in_executor(None, store_metrics_json, data)
@@ -48,6 +51,14 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"🚀 [HTTP {request.method}] {request.url.path}")
+    response = await call_next(request)
+    logger.info(f"✅ [HTTP {request.method}] {request.url.path} -> Status {response.status_code}")
+    return response
 
 
 @app.get("/health", tags=["Health"])

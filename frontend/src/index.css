@@ -1,0 +1,310 @@
+@import "tailwindcss";
+@import "@fontsource-variable/plus-jakarta-sans";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    /* Typography — Style Guide §2.1 (fonts self-hosted via @fontsource-variable) */
+    --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
+    --font-heading: var(--font-sans);
+
+    /* Type scale — Style Guide §2.2 (7 steps: 12/14/16/18/20/24/30px).
+       Provided by Tailwind's default text-xs…text-3xl, which already equal these
+       sizes — left rem-based (not overridden to px) so they honor the user's
+       browser font-size preference. */
+
+    /* Weight scale — Style Guide §2.3: 400/500/600/700/800 via
+       font-normal / font-medium / font-semibold / font-bold / font-extrabold.
+       Extrabold (800) is reserved for the wordmark/brand lockup only. */
+
+    /* Color — Style Guide §1 (shadcn semantic vars mapped to SG values via var reference) */
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+
+    /* Style-Guide-only extras — §1.1, §1.3, §1.4 */
+    --color-primary-hover: var(--primary-hover);
+    --color-primary-tint: var(--primary-tint);
+    --color-muted-text: var(--text-muted);
+    --color-success: var(--success);
+    --color-warning: var(--warning);
+    --color-info: var(--info);
+
+    /* Charts / sidebar — untouched by BL-012 (sidebar theming is BL-013) */
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+
+    /* Corner radius — Style Guide §4.1 (four fixed steps) */
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+
+    /* BL-013 — sidebar-only secondary text (name/email in the user menu).
+       The one token BL-013 adds; all other --sidebar-* slots already exist. */
+    --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+
+    /* BL-013 — Responsive breakpoints, Layout Guide §7. These equal Tailwind
+       v4's built-in defaults; declared explicitly so the scale is reviewable
+       in one place (AC-13) and immune to any future default drift. */
+    --breakpoint-sm: 640px;
+    --breakpoint-md: 768px;
+    --breakpoint-lg: 1024px;
+    --breakpoint-xl: 1280px;
+    --breakpoint-2xl: 1536px;
+}
+
+:root {
+    /* Brand accent — §1.1 (Accent = --primary, fixed across themes;
+       --primary-hover / --primary-tint are the SG "Accent Hover" / "Accent Tint") */
+    --primary: #00AAE7;
+    --primary-foreground: #FFFFFF;
+    --primary-hover: #2368A0;
+    --primary-tint: rgba(0, 170, 231, 0.08);
+    --ring: #00AAE7;
+
+    /* BL-013 — two-stop accent gradient (floating-panel pill, §6; future
+       product-switcher tiles, §2.3). Consumed via an arbitrary-value class,
+       so it needs no --color-* mapping (it isn't a solid color). */
+    --gradient-accent: linear-gradient(135deg, #00AAE7 0%, #2368A0 100%);
+
+    /* Surface & background — §1.2 */
+    --background: #F0F2F5;
+    --card: #FFFFFF;
+    --popover: #E8EAEE;
+    --secondary: #E8EAEE;
+    --muted: #E8EAEE;
+    --accent: #E8EAEE; /* Elevated Surface (solid highlight — item #5b) */
+    --border: #DDE0E6;
+    --input: #DDE0E6;
+
+    /* Text — §1.3 */
+    --foreground: #232527;
+    --card-foreground: #232527;
+    --popover-foreground: #232527;
+    --secondary-foreground: #232527;
+    --accent-foreground: #232527;
+    --muted-foreground: #8C8C8C; /* Secondary Text */
+    --text-muted: #B7B2B3;       /* Muted Text (placeholder / disabled) */
+
+    /* Semantic / status — §1.4 (single values, both themes) */
+    --destructive: #EF4048;
+    --destructive-foreground: #FFFFFF;
+    --success: #22C55E;
+    --warning: #F59E0B;
+    --info: #3B82F6;
+
+    /* Status-surface triplets — §1.5 (bg / border / text) */
+    --status-neutral-bg: #FFFFFF;
+    --status-neutral-border: #DDE0E6;
+    --status-neutral-text: #232527;
+    --status-success-bg: #E6F7FD;
+    --status-success-border: #80D3F0;
+    --status-success-text: #006A90;
+    --status-info-bg: #E6F7FD;
+    --status-info-border: #80D3F0;
+    --status-info-text: #006A90;
+    --status-warning-bg: #FEF9E8;
+    --status-warning-border: #F5D87A;
+    --status-warning-text: #92560A;
+    --status-error-bg: #FFF0F0;
+    --status-error-border: #F5B8B8;
+    --status-error-text: #C81E26;
+
+    /* Elevation — §4.2 */
+    --shadow-resting: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.12);
+    --shadow-ring: 0 0 0 2px rgba(0, 170, 231, 0.35);
+
+    /* Corner radius base — §4.1 (four steps live in @theme; base kept for residual var(--radius) refs) */
+    --radius: 8px;
+
+    /* Charts — untouched by BL-012 */
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+
+    /* BL-013 — sidebar navy, Layout Guide §2 / §2.2. Declared once, here only
+       (never in .dark), so the light/dark toggle cannot touch the rail
+       (AC-3). Navy hex is a tunable placeholder — no exact brand navy is
+       specified anywhere (A2). Repurposes the existing shadcn --sidebar-*
+       slots rather than inventing parallel names. */
+    --sidebar: #0B1220; /* placeholder navy */
+    --sidebar-foreground: #E7EBF3; /* near-white, cool */
+    --sidebar-border: rgba(255, 255, 255, 0.08); /* hairline on navy */
+    --sidebar-ring: #00AAE7; /* accent focus ring on navy */
+    --sidebar-accent: rgba(255, 255, 255, 0.06); /* inactive nav-item hover tint */
+    --sidebar-accent-foreground: #FFFFFF; /* text on hover */
+    --sidebar-primary: rgba(0, 170, 231, 0.16); /* active nav-item bg (accent-tinted) */
+    --sidebar-primary-foreground: #00AAE7; /* active nav-item accent text */
+    --sidebar-muted-foreground: #8B93A7; /* user-menu name/email secondary text */
+
+    /* BL-026-drift — native select option lists, declared once here and never in
+       .dark for the same reason as the sidebar above: the OS paints this panel
+       light in both themes, so its text must stay dark in both. */
+    --select-option-bg: #FFFFFF;
+    --select-option-fg: #232527; /* brand Black */
+}
+
+.dark {
+    /* Brand accent — §1.1 (Accent = --primary;
+       --primary-hover / --primary-tint are the SG "Accent Hover" / "Accent Tint") */
+    --primary: #00AAE7;
+    --primary-foreground: #FFFFFF;
+    --primary-hover: #2368A0;
+    --primary-tint: rgba(0, 170, 231, 0.12);
+    --ring: #00AAE7;
+
+    /* Surface & background — §1.2 */
+    --background: #09090B;
+    --card: #18181B;
+    --popover: #27272A;
+    --secondary: #27272A;
+    --muted: #27272A;
+    --accent: #27272A; /* Elevated Surface (solid) */
+    --border: #3F3F46;
+    --input: #3F3F46;
+
+    /* Text — §1.3 */
+    --foreground: #FAFAFA;
+    --card-foreground: #FAFAFA;
+    --popover-foreground: #FAFAFA;
+    --secondary-foreground: #FAFAFA;
+    --accent-foreground: #FAFAFA;
+    --muted-foreground: #A1A1AA; /* Secondary Text */
+    --text-muted: #71717A;       /* Muted Text (placeholder / disabled) */
+
+    /* Semantic / status — §1.4 */
+    --destructive: #EF4048;
+    --destructive-foreground: #FFFFFF;
+    --success: #22C55E;
+    --warning: #F59E0B;
+    --info: #3B82F6;
+
+    /* Status-surface triplets — §1.5 */
+    --status-neutral-bg: #18181B;
+    --status-neutral-border: #3F3F46;
+    --status-neutral-text: #FAFAFA;
+    --status-success-bg: #091E2E;
+    --status-success-border: #1A4D6E;
+    --status-success-text: #00AAE7;
+    --status-info-bg: #091E2E;
+    --status-info-border: #1A4D6E;
+    --status-info-text: #00AAE7;
+    --status-warning-bg: #1E1500;
+    --status-warning-border: #5C3C00;
+    --status-warning-text: #F59E0B;
+    --status-error-bg: #200A0A;
+    --status-error-border: #5C1A1A;
+    --status-error-text: #EF4048;
+
+    /* Elevation — §4.2 (higher opacity in dark) */
+    --shadow-resting: 0 1px 3px rgba(0, 0, 0, 0.40), 0 1px 2px rgba(0, 0, 0, 0.30);
+    --shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.50);
+    --shadow-ring: 0 0 0 2px rgba(0, 170, 231, 0.40);
+
+    /* Charts — untouched by BL-012 */
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+
+    /* BL-013 — no --sidebar-* overrides here on purpose: the rail is
+       theme-independent navy (declared once in :root above), so .dark must
+       not redefine it (AC-3). */
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  /* Smooth light/dark transition — Style Guide §1.6 (~0.25s, not instant).
+     Scoped to the brief window when the theme flips (a `.theme-transition`
+     class is toggled on <html> during the switch — see index.html), and gated
+     on prefers-reduced-motion so it never eases for reduced-motion users
+     (NEW-3), nor on ordinary hover/state changes app-wide. */
+  @media (prefers-reduced-motion: no-preference) {
+    .theme-transition,
+    .theme-transition *,
+    .theme-transition *::before,
+    .theme-transition *::after {
+      transition: background-color 0.25s ease, border-color 0.25s ease,
+                  color 0.25s ease, fill 0.25s ease, stroke 0.25s ease;
+    }
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+  /* BL-026-drift — a native <select>'s open option list is painted by the OS, not
+     by this stylesheet, and no `color-scheme` is declared, so the panel stays
+     white in dark mode while the text inherits the near-white foreground:
+     unreadable. Pinned to fixed light values rather than the `--popover` pair,
+     which `.dark` overrides. Scoped to `option`, which exists only inside a
+     select, so nothing else in the UI is affected. */
+  option {
+    background-color: var(--select-option-bg);
+    color: var(--select-option-fg);
+  }
+}
+
+/* NEW-3 — respect reduced motion on the themed primitives (the theme-switch
+   fade above is likewise gated); reduced-motion users get instant state changes. */
+@media (prefers-reduced-motion: reduce) {
+  [data-slot='button'],
+  [data-slot='badge'],
+  [data-slot='input'] {
+    transition: none;
+  }
+}
+
+/* NEW-2 — preserve a visible focus indicator in forced-colors / High Contrast
+   mode, where the box-shadow ring is dropped by the UA (WCAG 2.4.7). */
+@media (forced-colors: active) {
+  /* BL-013 — also cover hand-rolled focusable elements (the sidebar's collapse
+     toggle, nav items, and user-menu trigger carry no data-slot), so their
+     keyboard focus stays visible in High Contrast mode too. */
+  [data-slot='button']:focus-visible,
+  [data-slot='badge']:focus-visible,
+  [data-slot='input']:focus-visible,
+  a:focus-visible,
+  button:focus-visible,
+  [role='button']:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
