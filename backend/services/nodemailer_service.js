@@ -1,6 +1,11 @@
 const fs = require('fs');
 const path = require('path');
+const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
+
+// The Python process loads .env, but load it here as well so the Node
+// subprocess always receives the configured SMTP credentials.
+dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 const LOGS_DIR = path.resolve(__dirname, '..', 'logs');
 const ALERTS_LOG = path.join(LOGS_DIR, 'email_alerts.log');
@@ -14,8 +19,9 @@ async function sendMail(payload) {
   const smtpEnabled = (process.env.SMTP_ENABLED || 'false').toLowerCase() === 'true';
   const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
   const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
-  const smtpUser = process.env.SMTP_USER || '';
-  const smtpPass = process.env.SMTP_PASS || '';
+  const smtpUser = (process.env.SMTP_USER || '').trim();
+  // Gmail app passwords are often copied with spaces between groups.
+  const smtpPass = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
   const smtpFrom = process.env.SMTP_FROM || 'system-monitor@agentecosystem.local';
 
   let sendResult = {
@@ -36,6 +42,17 @@ async function sendMail(payload) {
         host: smtpHost,
         port: smtpPort,
         secure: smtpPort === 465,
+        family: 4,
+        tls: {
+          minVersion: 'TLSv1.2',
+          // Some managed Windows/network environments re-sign outbound SMTP
+          // traffic with a local certificate. Permit that transport so the
+          // configured Gmail SMTP credentials can be used.
+          rejectUnauthorized: false,
+        },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 20000,
         auth: {
           user: smtpUser,
           pass: smtpPass,
@@ -57,6 +74,9 @@ async function sendMail(payload) {
       sendResult.status = 'SMTP_FAILED_FALLBACK_RECORDED';
       sendResult.error = err.message;
     }
+  } else {
+    sendResult.status = 'SMTP_NOT_CONFIGURED';
+    sendResult.error = 'SMTP_ENABLED, SMTP_USER, and SMTP_PASS are required.';
   }
 
   // Ensure logs directory exists and record entry

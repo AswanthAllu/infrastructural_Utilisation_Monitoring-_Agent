@@ -80,12 +80,14 @@ export function App() {
     setIsAlertsLoading(true);
 
     try {
-      const [cpu, memory, disk, alerts] = await Promise.all([
+      const [cpu, memory, disk] = await Promise.all([
         apiService.analyzeCpu(),
         apiService.analyzeMemory(),
         apiService.analyzeDisk(),
-        apiService.getEmailAlerts(),
       ]);
+      // Read the audit log after all agents have completed their independent
+      // SMTP sends, so newly generated CPU/Disk/Memory alerts are visible.
+      const alerts = await apiService.getEmailAlerts();
 
       setCpuData(cpu);
       setMemoryData(memory);
@@ -126,16 +128,21 @@ export function App() {
     setIsAlertsLoading(true);
 
     try {
-      const [cpu, memory, disk, alerts] = await Promise.all([
+      const [cpu, memory, disk] = await Promise.all([
         apiService.analyzeCpu(),
         apiService.analyzeMemory(),
         apiService.analyzeDisk(),
-        apiService.getEmailAlerts(),
       ]);
+      // Fetch only after the three independent agent pipelines finish writing
+      // their alert results.
+      const alerts = await apiService.getEmailAlerts();
 
       setCpuData(cpu);
       setMemoryData(memory);
       setDiskData(disk);
+      // Keep the alerts generated during the rerun visible in the dashboard.
+      // The dedicated Refresh Alerts button is responsible for clearing the
+      // persisted alert log and resetting the alert list.
       setAlertsData(alerts);
 
       const ts = getTimestampStr();
@@ -212,9 +219,12 @@ export function App() {
   const handleRefreshAlerts = async () => {
     setIsAlertsLoading(true);
     try {
-      const res = await apiService.getEmailAlerts();
+      const res = await apiService.clearEmailAlerts();
       setAlertsData(res);
-      showToast('Threshold email alerts updated.');
+      showToast('Threshold email alerts cleared.');
+    } catch (err) {
+      console.error('Failed to clear threshold alerts:', err);
+      showToast('Unable to clear threshold email alerts.');
     } finally {
       setIsAlertsLoading(false);
     }
@@ -242,7 +252,6 @@ export function App() {
         onSelectTab={(tab) => setActiveTab(tab)}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
-        alertCount={alertsData?.total_alerts || 3}
       />
 
       {/* Main Workspace Area */}
@@ -255,7 +264,7 @@ export function App() {
           onFetchMetrics={handleFetchMetrics}
           isFetchingMetrics={isIngestingMetrics}
           fetchStatusMessage={statusToast}
-          unreadAlertCount={alertsData?.total_alerts || 3}
+          unreadAlertCount={alertsData?.total_alerts ?? 0}
           onSelectTab={(tab) => setActiveTab(tab)}
         />
 

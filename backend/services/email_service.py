@@ -79,12 +79,15 @@ def send_threshold_alert_email(
     timestamp: str,
     details: Dict[str, Any],
     remediation_summary: Optional[str] = None,
-    recipient_email: str = DEFAULT_ALERT_EMAIL,
+    recipient_email: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Dispatches a single threshold alert email to the recipient using Nodemailer (via Node.js)
     with local audit-logging fallback to logs/email_alerts.log.
     """
+    # Resolve this at send time so a long-running backend cannot keep using a
+    # recipient captured from an older .env during module import.
+    recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
     subject = f"Limit crossed {threshold}% {resource_name} usage"
     
     html_content = f"""
@@ -133,7 +136,9 @@ def send_threshold_alert_email(
                 [node_bin, str(NODEMAILER_SCRIPT), b64_arg],
                 text=True,
                 capture_output=True,
-                timeout=5,
+                # Allow Gmail TLS/authentication enough time to complete when
+                # CPU, Disk, and Memory alerts are sent concurrently.
+                timeout=20,
             )
             if proc.returncode == 0 and proc.stdout.strip():
                 try:

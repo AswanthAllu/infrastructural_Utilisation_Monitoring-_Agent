@@ -7,12 +7,12 @@ import {
   ExternalLink,
   HardDrive,
   Layers,
-  Mail,
   RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
+import { RemediationList } from '../common/RemediationList';
 import type {
   AgentAnalysisResponse,
   EmailAlertsResponse,
@@ -179,9 +179,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
             <span className="font-heading text-2xl font-bold tracking-tight text-foreground">
               {cpuCurrent}%
             </span>
-            <Badge variant="destructive" size="sm">
-              {cpuThreshold} CROSSED
-            </Badge>
           </div>
           <p className="mt-2 text-xs text-muted-foreground truncate">
             Peak {cpuPeak}% · Slot burn on worker-node-04b
@@ -209,9 +206,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
             <span className="font-heading text-2xl font-bold tracking-tight text-foreground">
               {diskCurrent}%
             </span>
-            <Badge variant="warning" size="sm">
-              {diskThreshold} CROSSED
-            </Badge>
           </div>
           <p className="mt-2 text-xs text-muted-foreground truncate">
             {diskUsedGb} GB used of {diskTotalGb} GB
@@ -239,9 +233,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
             <span className="font-heading text-2xl font-bold tracking-tight text-foreground">
               {memCurrent}%
             </span>
-            <Badge variant="warning" size="sm">
-              {memThreshold} CROSSED
-            </Badge>
           </div>
           <p className="mt-2 text-xs text-muted-foreground truncate">
             {memUsedGb} GB used of {memTotalGb} GB
@@ -269,9 +260,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
             <span className="font-heading text-2xl font-bold tracking-tight text-foreground">
               {alertCount} Alerts
             </span>
-            <Badge variant="destructive" size="sm">
-              DISPATCHED
-            </Badge>
           </div>
           <p className="mt-2 text-xs text-muted-foreground truncate">
             Audited via Nodemailer pipeline
@@ -391,9 +379,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
                   <CheckCircle2 className="h-3 w-3" />
                   Recommended Action
                 </span>
-                <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  {cpuRemediation?.action_required}
-                </p>
+                <RemediationList text={cpuRemediation?.action_required} className="text-[11px] text-muted-foreground" />
               </div>
               )}
             </div>
@@ -492,9 +478,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
                   <CheckCircle2 className="h-3 w-3" />
                   Recommended Action
                 </span>
-                <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  {diskRemediation?.action_required}
-                </p>
+                <RemediationList text={diskRemediation?.action_required} className="text-[11px] text-muted-foreground" />
               </div>
               )}
             </div>
@@ -593,9 +577,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
                   <CheckCircle2 className="h-3 w-3" />
                   Recommended Action
                 </span>
-                <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  {memRemediation?.action_required}
-                </p>
+                <RemediationList text={memRemediation?.action_required} className="text-[11px] text-muted-foreground" />
               </div>
               )}
             </div>
@@ -787,28 +769,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
         </div>
       </Card> */}
 
-      {/* Email Alerting Pipeline Banner */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-[var(--radius-lg)] border border-[var(--status-success-border)] bg-[var(--status-success-bg)]/80 p-4 text-xs text-[var(--status-success-text)] shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="rounded-full bg-[var(--status-success-text)]/10 p-2 text-[var(--status-success-text)]">
-            <Mail className="h-4 w-4" />
-          </div>
-          <div>
-            <div className="font-semibold text-sm">Automated Threshold Alerting Configured</div>
-            <p className="text-[11px] text-muted-foreground mt-0.5">
-              Consolidated threshold alerts (50%, 70%, 100%) are automatically dispatched to <span className="font-mono font-medium text-foreground">sirivennelanarava@gmail.com</span> upon metric breaches.
-            </p>
-          </div>
-        </div>
-
-        <button
-          onClick={() => onNavigate('alerts')}
-          className="shrink-0 flex items-center gap-1.5 rounded-[var(--radius-md)] border border-border bg-card px-3 py-1.5 font-semibold text-foreground hover:bg-muted transition-colors text-xs"
-        >
-          <span>View Notification Log ({alertCount})</span>
-          <ArrowRight className="h-3 w-3" />
-        </button>
-      </div>
     </div>
   );
 };

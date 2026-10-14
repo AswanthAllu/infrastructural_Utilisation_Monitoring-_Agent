@@ -107,7 +107,7 @@ def _load_metrics_data(source: Optional[Union[str, Path, List[Dict[str, Any]]]] 
 
 def process_system_cpu_metrics(
     source: Optional[Union[str, Path, List[Dict[str, Any]], Dict[str, Any]]] = None,
-    recipient_email: str = DEFAULT_ALERT_EMAIL,
+    recipient_email: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Direct CPU Agent tool that:
@@ -118,6 +118,7 @@ def process_system_cpu_metrics(
     4. Evaluates highest crossed threshold and sends email alert if exceeded.
     5. Delivers remediation plans (only for usage > 90%, deduplicated to 1 for 100%).
     """
+    recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
     bundle = _resolve_telemetry_bundle(source)
     current_metrics = bundle.get("current_metrics") or {}
     latest_5 = bundle.get("latest_5_recordings") or []
@@ -204,7 +205,10 @@ def process_system_cpu_metrics(
         diagnosis.setdefault("diagnosis_status", "CONFIRMED")
         if not diagnosis.get("root_cause") or "0.0%" in diagnosis.get("root_cause", "") or "No issues detected" in diagnosis.get("root_cause", ""):
             primary_proc = top_5_procs[0].get("process_name") if top_5_procs else hostname
-            diagnosis["root_cause"] = f"Elevated CPU utilization ({eval_usage:.1f}%) exceeding the {highest_threshold}% threshold, driven primarily by {primary_proc}."
+            if highest_threshold == 100:
+                diagnosis["root_cause"] = f"Full CPU saturation reached {eval_usage:.1f}% on {hostname}, driven primarily by {primary_proc}."
+            else:
+                diagnosis["root_cause"] = f"Elevated CPU utilization ({eval_usage:.1f}%) exceeding the {highest_threshold}% threshold, driven primarily by {primary_proc}."
         remediation.setdefault("subagent", "remediation_agent")
         remediation.setdefault("status", "REMEDIATION_DRAFTED")
 
@@ -228,14 +232,17 @@ def process_system_cpu_metrics(
         plan = build_single_cpu_remediation_plan(rep_rec, 1)
         remediation_plans.append(plan)
 
-    # Email alert if threshold crossed
+    # Email only after the current CPU reading crosses the operational alert
+    # threshold. Historical peak values remain evidence for diagnosis but do
+    # not independently trigger an email.
     email_alerts_dispatched = []
-    if highest_threshold is not None:
-        reported_cpu_usage = max(current_usage, peak_usage)
+    if current_usage > 70.0:
+        reported_cpu_usage = current_usage
+        email_threshold = max(get_highest_crossed_threshold(current_usage, per_core) or 70, 70)
         alert_info = send_threshold_alert_email(
             resource_name="CPU",
             usage_percent=reported_cpu_usage,
-            threshold=highest_threshold,
+            threshold=email_threshold,
             hostname=hostname,
             timestamp=timestamp,
             details={
@@ -243,7 +250,7 @@ def process_system_cpu_metrics(
                 "peak_usage": f"{peak_usage:.1f}%",
                 "cores": cores,
                 "per_core": per_core,
-                "highest_threshold_crossed": highest_threshold,
+                "highest_threshold_crossed": email_threshold,
                 "root_cause": diagnosis.get("root_cause"),
                 "llm_powered": llm_result.get("llm_powered", False),
             },
@@ -282,7 +289,7 @@ def process_system_cpu_metrics(
 
 def process_system_disk_metrics(
     source: Optional[Union[str, Path, List[Dict[str, Any]], Dict[str, Any]]] = None,
-    recipient_email: str = DEFAULT_ALERT_EMAIL,
+    recipient_email: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Direct Disk Agent tool:
@@ -292,6 +299,7 @@ def process_system_disk_metrics(
     3. Invokes LLM (Gemini) with unmerged payload (no merge).
     4. Evaluates single highest crossed threshold (50%, 70%, 100%) and sends alert email via Nodemailer.
     """
+    recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
     bundle = _resolve_telemetry_bundle(source)
     current_metrics = bundle.get("current_metrics") or {}
     latest_5 = bundle.get("latest_5_recordings") or []
@@ -390,15 +398,23 @@ def process_system_disk_metrics(
         })
 
     email_alerts = []
-    if highest_threshold is not None:
-        reported_disk_usage = max(current_usage, peak_disk_usage)
+    if current_usage > 70.0:
+        reported_disk_usage = current_usage
+        email_threshold = 100 if current_usage >= 100 else 70
         email_alerts.append(send_threshold_alert_email(
             resource_name="Disk",
             usage_percent=reported_disk_usage,
-            threshold=highest_threshold,
+            threshold=email_threshold,
             hostname=hostname,
             timestamp=timestamp,
-            details={"used_gb": used_gb, "total_gb": total_gb, "free_gb": free_gb, "peak_usage": f"{peak_disk_usage:.1f}%"},
+            details={
+                "current_usage": f"{current_usage:.1f}%",
+                "used_gb": used_gb,
+                "total_gb": total_gb,
+                "free_gb": free_gb,
+                "peak_usage": f"{peak_disk_usage:.1f}%",
+                "agent": "disk_agent",
+            },
             remediation_summary=remediation.get("action_required"),
             recipient_email=recipient_email,
         ))
@@ -449,7 +465,7 @@ def process_system_disk_metrics(
 
 def process_system_memory_metrics(
     source: Optional[Union[str, Path, List[Dict[str, Any]], Dict[str, Any]]] = None,
-    recipient_email: str = DEFAULT_ALERT_EMAIL,
+    recipient_email: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Direct Memory Agent tool:
@@ -459,6 +475,7 @@ def process_system_memory_metrics(
     3. Invokes LLM (Gemini) with unmerged payload (no merge).
     4. Evaluates single highest crossed threshold (50%, 70%, 100%) and sends alert email via Nodemailer.
     """
+    recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
     bundle = _resolve_telemetry_bundle(source)
     current_metrics = bundle.get("current_metrics") or {}
     latest_5 = bundle.get("latest_5_recordings") or []
@@ -622,15 +639,23 @@ def process_system_memory_metrics(
         })
 
     email_alerts = []
-    if highest_threshold is not None:
-        reported_ram_usage = max(current_usage, peak_ram_usage)
+    if current_usage > 70.0:
+        reported_ram_usage = current_usage
+        email_threshold = 90 if current_usage >= 90 else 70
         email_alerts.append(send_threshold_alert_email(
             resource_name="RAM",
             usage_percent=reported_ram_usage,
-            threshold=highest_threshold,
+            threshold=email_threshold,
             hostname=hostname,
             timestamp=timestamp,
-            details={"used_gb": used_gb, "total_gb": total_gb, "available_gb": available_gb, "peak_usage": f"{peak_ram_usage:.1f}%"},
+            details={
+                "current_usage": f"{current_usage:.1f}%",
+                "used_gb": used_gb,
+                "total_gb": total_gb,
+                "available_gb": available_gb,
+                "peak_usage": f"{peak_ram_usage:.1f}%",
+                "agent": "memory_agent",
+            },
             remediation_summary=remediation.get("action_required"),
             recipient_email=recipient_email,
         ))

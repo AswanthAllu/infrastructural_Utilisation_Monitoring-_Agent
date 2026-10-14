@@ -27,13 +27,19 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
   const alerts = data?.alerts || [];
 
   const filteredAlerts = alerts.filter((alert) => {
+    // Keep the screen resilient to older audit records that may not have all
+    // normalized fields yet.
+    const subject = alert.subject || 'Threshold alert';
+    const metricName = alert.metric_name || 'Unknown metric';
+    const recipient = alert.recipient || 'Unknown recipient';
+    const thresholdLevel = alert.threshold_level || '';
     const matchesSearch =
-      alert.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      alert.metric_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      alert.recipient.toLowerCase().includes(searchTerm.toLowerCase());
+      subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      metricName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      recipient.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesThreshold =
-      thresholdFilter === 'ALL' || alert.threshold_level.includes(thresholdFilter);
+      thresholdFilter === 'ALL' || thresholdLevel.includes(thresholdFilter);
 
     return matchesSearch && matchesThreshold;
   });
@@ -143,32 +149,33 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
             >
               <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge
-                    variant={
-                      alert.threshold_level.includes('70') || alert.threshold_level.includes('100')
-                        ? 'destructive'
-                        : 'warning'
-                    }
-                    size="sm"
-                  >
-                    {alert.threshold_level}
-                  </Badge>
-                  <span className="font-mono text-xs font-semibold text-foreground">
-                    {alert.metric_name}
-                  </span>
-                  <Badge variant="success" size="sm">
-                    {alert.status}
-                  </Badge>
+                  {alert.threshold_level && (
+                    <Badge
+                      variant={
+                        alert.threshold_level.includes('70') || alert.threshold_level.includes('100')
+                          ? 'destructive'
+                          : 'warning'
+                      }
+                      size="sm"
+                    >
+                      {alert.threshold_level}
+                    </Badge>
+                  )}
+                  {alert.metric_name && (
+                    <span className="font-mono text-xs font-semibold text-foreground">
+                      {alert.metric_name}
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground">
                   <Clock className="h-3 w-3" />
-                  <span>{new Date(alert.timestamp).toLocaleString()}</span>
+                  <span>{alert.timestamp ? new Date(alert.timestamp).toLocaleString() : 'Unknown time'}</span>
                 </div>
               </div>
 
               <h4 className="mt-2 text-sm font-semibold text-foreground">
-                {alert.subject}
+                {alert.subject || 'Threshold alert'}
               </h4>
 
               {alert.details && (
@@ -178,8 +185,8 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
               )}
 
               <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2.5 text-xs text-muted-foreground font-mono">
-                <span>To: <strong className="text-foreground">{alert.recipient}</strong></span>
-                <span>Observed: <strong className="text-foreground">{alert.value}%</strong></span>
+                <span>To: <strong className="text-foreground">{alert.recipient || 'Unknown recipient'}</strong></span>
+                <span>Observed: <strong className="text-foreground">{alert.value ?? 0}%</strong></span>
               </div>
             </div>
           ))

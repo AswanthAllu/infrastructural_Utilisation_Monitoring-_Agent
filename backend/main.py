@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,17 +18,53 @@ from routers.disk_router import router as disk_router
 from routers.memory_router import router as memory_router
 from routers.metrics_router import router as metrics_router
 from routers.orchestrator_router import router as orchestrator_router
-from tools.metrics_fetcher import fetch_metrics_history, store_metrics_json
+from tools.metrics_fetcher import fetch_current_metrics, fetch_metrics_history, store_metrics_json
+from services.email_service import send_threshold_alert_email
 
 
-async def periodic_metrics_poller(interval_seconds: int = 300):
-    """Periodically fetches telemetry history every 5 minutes and saves to logs/."""
+async def periodic_metrics_poller(interval_seconds: int = 60):
+    """Fetch VM telemetry and send one alert when a resource crosses above 70%."""
+    previously_above_70 = {"CPU": False, "RAM": False, "Disk": False}
     while True:
         try:
             loop = asyncio.get_running_loop()
             data = await loop.run_in_executor(None, fetch_metrics_history)
             saved = await loop.run_in_executor(None, store_metrics_json, data)
             logger.info(f"Background metrics poller saved: {saved}")
+
+            current = await loop.run_in_executor(None, fetch_current_metrics)
+            cpu = current.get("cpu") or {}
+            ram = current.get("ram") or {}
+            disk = current.get("disk") or {}
+            # Use both the live snapshot and the newest history sample so a
+            # short CPU spike is not missed between polling cycles.
+            latest = data[-1] if data else {}
+            latest_cpu = latest.get("cpu") or {}
+            latest_ram = latest.get("ram") or {}
+            latest_disk = latest.get("disk") or {}
+            metrics = {
+                "CPU": max(float(cpu.get("total", 0) or 0), float(latest_cpu.get("total", 0) or 0)),
+                "RAM": max(float(ram.get("percent", 0) or 0), float(latest_ram.get("percent", 0) or 0)),
+                "Disk": max(float(disk.get("percent", 0) or 0), float(latest_disk.get("percent", 0) or 0)),
+            }
+            recipient = os.getenv("DEFAULT_ALERT_EMAIL", "").strip()
+            for resource, usage in metrics.items():
+                is_above_70 = usage > 70.0
+                if is_above_70 and not previously_above_70[resource] and recipient:
+                    await loop.run_in_executor(
+                        None,
+                        send_threshold_alert_email,
+                        resource,
+                        usage,
+                        70,
+                        current.get("hostname", "system-host"),
+                        current.get("timestamp", ""),
+                        {"current_usage": f"{usage:.1f}%", "source": "background_vm_poller"},
+                        None,
+                        recipient,
+                    )
+                    logger.info(f"Automatic {resource} >70% alert sent to {recipient}")
+                previously_above_70[resource] = is_above_70
         except Exception as exc:
             logger.warning(f"Background metrics poller encountered error: {exc}")
         await asyncio.sleep(interval_seconds)
@@ -36,7 +73,7 @@ async def periodic_metrics_poller(interval_seconds: int = 300):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: launch background poller
-    poller_task = asyncio.create_task(periodic_metrics_poller(interval_seconds=300))
+    poller_task = asyncio.create_task(periodic_metrics_poller(interval_seconds=60))
     yield
     # Shutdown
     poller_task.cancel()

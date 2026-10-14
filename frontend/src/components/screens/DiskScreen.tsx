@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
+import { RemediationList } from '../common/RemediationList';
 import type { AgentAnalysisResponse } from '../../types';
 
 interface DiskScreenProps {
@@ -181,9 +182,7 @@ export const DiskScreen: React.FC<DiskScreenProps> = ({
               {remediation?.action_required && (
                 <div>
                   <span className="font-semibold text-muted-foreground">Action Required:</span>
-                  <p className="mt-1 text-sm font-medium text-foreground">
-                    {remediation.action_required}
-                  </p>
+                  <RemediationList text={remediation.action_required} className="text-sm font-medium" />
                 </div>
               )}
 
@@ -193,9 +192,7 @@ export const DiskScreen: React.FC<DiskScreenProps> = ({
                     <ShieldCheck className="h-4 w-4" />
                     Storage Policy Guardrail:
                   </div>
-                  <p className="mt-1 text-xs text-foreground">
-                    {remediation.preventive_guardrail}
-                  </p>
+                  <RemediationList text={remediation.preventive_guardrail} />
                 </div>
               )}
 

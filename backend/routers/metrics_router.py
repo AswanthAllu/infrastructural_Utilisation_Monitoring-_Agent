@@ -37,5 +37,36 @@ async def get_email_alerts_log():
     
     lines = log_file.read_text(encoding="utf-8").strip().splitlines()
     import json
-    parsed = [json.loads(line) for line in lines if line.strip()]
+    parsed = []
+    for line in lines:
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        # Normalize the audit-log field names to the frontend alert contract.
+        # Keep the original fields as well for backwards compatibility.
+        threshold = record.get("threshold_level", record.get("threshold", ""))
+        usage = record.get("value", record.get("usage_percent", 0))
+        parsed.append({
+            **record,
+            "metric_name": record.get("metric_name", record.get("resource", "Unknown")),
+            "threshold_level": (
+                str(threshold) if str(threshold).endswith("%") else f"{threshold}%"
+            ),
+            "value": usage,
+            "status": record.get("status", "QUEUED"),
+            "details": record.get("details", record.get("action_taken", "")),
+        })
     return {"total_alerts": len(parsed), "alerts": parsed[-20:]}
+
+
+@router.post("/alerts/clear")
+@router.delete("/alerts")
+async def clear_email_alerts_log():
+    """Clear the persisted alert audit log without changing alert dispatching."""
+    log_file = Path(__file__).resolve().parent.parent / "logs" / "email_alerts.log"
+    try:
+        if log_file.exists():
+            log_file.write_text("", encoding="utf-8")
+        return {"success": True, "total_alerts": 0, "alerts": []}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to clear email alerts: {exc}")

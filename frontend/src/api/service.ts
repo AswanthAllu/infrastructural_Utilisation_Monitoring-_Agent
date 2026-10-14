@@ -61,6 +61,18 @@ class ApiService {
     return await res.json();
   }
 
+  async clearEmailAlerts(): Promise<EmailAlertsResponse> {
+    const res = await fetch(`${this.baseUrl}/api/metrics/alerts/clear`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => res.statusText);
+      throw new Error(`Failed to clear email alerts: ${errorText}`);
+    }
+    return await res.json();
+  }
+
   async analyzeCpu(customText?: string): Promise<AgentAnalysisResponse> {
     let res: Response;
     if (customText) {

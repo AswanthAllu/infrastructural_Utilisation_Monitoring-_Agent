@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
+import { RemediationList } from '../common/RemediationList';
 import type { OrchestratorAnalysisResponse } from '../../types';
 
 interface OrchestratorScreenProps {
@@ -199,7 +200,7 @@ export const OrchestratorScreen: React.FC<OrchestratorScreenProps> = ({
                       <ShieldCheck className="h-4 w-4" />
                       FinOps Guardrail Applied:
                     </div>
-                    <p className="mt-1">{result.finops_guardrail}</p>
+                    <RemediationList text={result.finops_guardrail} />
                   </div>
                 )}
               </div>

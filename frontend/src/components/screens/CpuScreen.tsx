@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
+import { RemediationList } from '../common/RemediationList';
 import type { AgentAnalysisResponse } from '../../types';
 
 interface CpuScreenProps {
@@ -266,9 +267,10 @@ export const CpuScreen: React.FC<CpuScreenProps> = ({
             <div className="space-y-4">
               <div>
                 <span className="text-xs font-medium text-muted-foreground">Action Required:</span>
-                <p className="mt-1 text-sm font-semibold text-foreground">
-                  {remediation?.action_required || 'Enforce partition predicate pruning and reservation burst ceiling.'}
-                </p>
+                <RemediationList
+                  text={remediation?.action_required || 'Enforce partition predicate pruning and reservation burst ceiling.'}
+                  className="text-sm font-semibold"
+                />
               </div>
 
               {remediation?.preventive_guardrail && (
@@ -277,9 +279,7 @@ export const CpuScreen: React.FC<CpuScreenProps> = ({
                     <ShieldCheck className="h-4 w-4" />
                     FinOps Preventive Guardrail:
                   </div>
-                  <p className="mt-1 text-xs text-foreground">
-                    {remediation.preventive_guardrail}
-                  </p>
+                  <RemediationList text={remediation.preventive_guardrail} />
                 </div>
               )}
 
@@ -393,13 +393,15 @@ export const CpuScreen: React.FC<CpuScreenProps> = ({
                 )}
                 {plan.action_required && (
                   <div className="mt-2 rounded-[var(--radius-sm)] bg-muted/40 p-2.5 text-xs text-foreground">
-                    <strong className="text-[var(--primary)]">Action: </strong> {plan.action_required}
+                    <strong className="text-[var(--primary)]">Action:</strong>
+                    <RemediationList text={plan.action_required} />
                   </div>
                 )}
                 {plan.preventive_guardrail && (
-                  <p className="mt-2 text-xs text-[var(--status-success-text)] font-medium">
-                    🛡️ Guardrail: {plan.preventive_guardrail}
-                  </p>
+                  <div className="mt-2 text-xs text-[var(--status-success-text)] font-medium">
+                    <span>🛡️ Guardrail:</span>
+                    <RemediationList text={plan.preventive_guardrail} className="mt-0 text-[11px] text-[var(--status-success-text)]" />
+                  </div>
                 )}
               </div>
             ))}

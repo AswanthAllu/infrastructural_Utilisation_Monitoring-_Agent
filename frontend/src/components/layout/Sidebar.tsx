@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  AlertTriangle,
   ChevronLeft,
   ChevronRight,
   Cpu,
@@ -15,7 +14,6 @@ interface SidebarProps {
   onSelectTab: (tab: NavigationTab) => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  alertCount: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -23,7 +21,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   isCollapsed,
   onToggleCollapse,
-  alertCount,
 }) => {
   const navItems = [
     {
@@ -53,13 +50,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Layers,
       badge: 'RAM',
       desc: 'Heap & leak mitigation',
-    },
-    {
-      id: 'alerts' as NavigationTab,
-      label: 'Threshold Alerts',
-      icon: AlertTriangle,
-      badge: alertCount > 0 ? String(alertCount) : null,
-      desc: '50% / 70% / 100% email logs',
     },
   ];
 
@@ -136,9 +126,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {item.badge && (
                     <span
                       className={`ml-2 rounded-[var(--radius-sm)] px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
-                        item.id === 'alerts' && alertCount > 0
-                          ? 'bg-[var(--destructive)] text-white animate-pulse'
-                          : isActive
+                        isActive
                           ? 'bg-[var(--primary)]/20 text-[var(--primary)]'
                           : 'bg-white/10 text-[var(--sidebar-muted-foreground)]'
                       }`}
