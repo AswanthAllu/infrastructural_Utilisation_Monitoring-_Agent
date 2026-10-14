@@ -10,7 +10,9 @@ export const RemediationList: React.FC<RemediationListProps> = ({ text, classNam
   if (!text?.trim()) return null;
 
   const items = text
-    .split(/\r?\n|\s*;\s*/)
+    // Split newline/semicolon lists and numbered actions even when the AI
+    // returns all actions on one line.
+    .split(/\r?\n|\s*;\s*|(?=\s+\d+[.)]\s+)/)
     .map((item) => item.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim())
     .filter(Boolean);
 

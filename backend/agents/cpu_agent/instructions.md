@@ -42,6 +42,7 @@ Analyze the telemetry to evaluate whether an issue exists:
   4. **Identify Supporting Evidence**: Highlight secondary background activity.
   5. **Diagnose Likely Root Cause**: Provide an evidence-backed root cause distinguishing application workload spikes from operating system faults.
   6. **Assign Confidence**: Mark diagnosis confidence (`High`, `Medium`, or `Low`).
+  7. **Context-aware remediation**: Build a new numbered action plan from the current CPU value, history trend, saturated cores, top process CPU share, PID, thread count, and correlated service evidence. Explain the likely cause, identify the workload to reduce, state whether termination is unsafe, and provide a verification target. Never copy raw command lines or test scripts into remediation.
 
 ---
 

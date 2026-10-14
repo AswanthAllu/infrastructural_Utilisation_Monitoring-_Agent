@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -12,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from services.email_service import (
     DEFAULT_ALERT_EMAIL,
     evaluate_history_highest_threshold,
+    get_alert_email,
     get_highest_crossed_threshold,
     send_threshold_alert_email,
 )
@@ -87,6 +89,27 @@ def _resolve_telemetry_bundle(
     }
 
 
+def _classify_memory_workload(process: Dict[str, Any]) -> str:
+    """Classify a process without exposing its raw command or script body."""
+    name = str(process.get("process_name") or process.get("name") or "").lower()
+    command = str(process.get("command_line") or process.get("cmdline") or "").lower()
+    synthetic_markers = ("stress_wave", "stress", "bytearray", "allocated:", "memory spike")
+    if any(marker in name or marker in command for marker in synthetic_markers):
+        return "synthetic/test memory workload"
+    if any(marker in name or marker in command for marker in ("postgres", "mysql", "nginx", "sshd", "systemd", "dockerd")):
+        return "infrastructure service"
+    if any(marker in name or marker in command for marker in ("worker", "celery", "queue", "consumer", "job")):
+        return "application worker"
+    return "application or user process"
+
+
+def _safe_process_label(process: Dict[str, Any], service_name: str) -> str:
+    """Return safe process context for an engineer-facing recommendation."""
+    name = str(process.get("process_name") or process.get("name") or service_name)
+    pid = process.get("pid", "unknown")
+    return f"{name} (PID {pid})"
+
+
 def _load_metrics_data(source: Optional[Union[str, Path, List[Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
     """Loads metrics list from in-memory data, a filepath, or fetches latest from logs/endpoint."""
     if isinstance(source, list):
@@ -118,7 +141,7 @@ def process_system_cpu_metrics(
     4. Evaluates highest crossed threshold and sends email alert if exceeded.
     5. Delivers remediation plans (only for usage > 90%, deduplicated to 1 for 100%).
     """
-    recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
+    recipient_email = (recipient_email or get_alert_email()).strip()
     bundle = _resolve_telemetry_bundle(source)
     current_metrics = bundle.get("current_metrics") or {}
     latest_5 = bundle.get("latest_5_recordings") or []
@@ -175,6 +198,38 @@ def process_system_cpu_metrics(
         else "MEDIUM" if highest_threshold == 50
         else "LOW"
     )
+    current_cpu_alert = current_usage > 70.0
+    if current_cpu_alert:
+        primary = top_5_procs[0] if top_5_procs else {}
+        primary_name = primary.get("process_name") or primary.get("name") or hostname
+        primary_pid = primary.get("pid", "unknown")
+        primary_cpu = float(primary.get("cpu_percent", 0.0) or 0.0)
+        primary_threads = primary.get("thread_count") or primary.get("threads")
+        history_start = recent_usages[0] if recent_usages else current_usage
+        history_average = sum(recent_usages) / len(recent_usages) if recent_usages else current_usage
+        trend = "rising" if current_usage > history_start + 2 else "falling" if current_usage < history_start - 2 else "stable"
+        saturated = ", ".join(str(i + 1) for i in saturated_cores) or "none"
+        thread_note = f" with {primary_threads} threads" if primary_threads is not None else ""
+        urgency = "CRITICAL: reduce non-essential CPU work immediately and involve the on-call." if current_usage >= 90 else "HIGH: reduce the identified workload before CPU reaches the 90% escalation tier."
+        remediation = {
+            "subagent": "remediation_agent",
+            "status": "REMEDIATION_DRAFTED",
+            "action_required": "\n".join([
+                urgency,
+                f"Cause: CPU is {current_usage:.1f}% now versus a {history_average:.1f}% history average ({trend}); {primary_name} (PID {primary_pid}) is the leading process at {primary_cpu:.1f}% CPU{thread_note}.",
+                f"Check {primary_name} logs, worker count, request/batch volume, and the next history sample to distinguish a workload burst from a runaway loop or retry storm. Saturated cores: {saturated}.",
+                f"Reduce concurrency, pause the specific non-critical job, or rate-limit the workload owned by {primary_name}; do not terminate a critical service based only on CPU percentage.",
+                f"After the change, rerun telemetry and confirm CPU falls below 70% and the process CPU share declines. If CPU remains above 90% after workload control, scale host capacity; escalate if all cores remain saturated.",
+            ]),
+            "preventive_guardrail": None,
+        }
+    elif not current_cpu_alert:
+        remediation = {
+            "subagent": "remediation_agent",
+            "status": "NOT_REQUIRED",
+            "action_required": "",
+            "preventive_guardrail": None,
+        }
 
     if highest_threshold is None:
         detection["subagent"] = "detection_agent"
@@ -216,7 +271,7 @@ def process_system_cpu_metrics(
     # 1. Only show for CPU utilization data having values > 90%.
     # 2. If 100% saturation is present, emit only 1 plan.
     remediation_plans = []
-    if current_usage > 90.0 or peak_usage > 90.0:
+    if current_cpu_alert:
         primary_svc_name = top_5_procs[0].get("process_name") if top_5_procs else hostname
         rep_rec = {
             "record_id": "cpu_live_latest",
@@ -230,6 +285,8 @@ def process_system_cpu_metrics(
             "breached_thresholds": [th for th in [100, 70, 50] if max(current_usage, peak_usage) >= th],
         }
         plan = build_single_cpu_remediation_plan(rep_rec, 1)
+        plan["action_required"] = remediation["action_required"]
+        plan["preventive_guardrail"] = None
         remediation_plans.append(plan)
 
     # Email only after the current CPU reading crosses the operational alert
@@ -299,7 +356,7 @@ def process_system_disk_metrics(
     3. Invokes LLM (Gemini) with unmerged payload (no merge).
     4. Evaluates single highest crossed threshold (50%, 70%, 100%) and sends alert email via Nodemailer.
     """
-    recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
+    recipient_email = (recipient_email or get_alert_email()).strip()
     bundle = _resolve_telemetry_bundle(source)
     current_metrics = bundle.get("current_metrics") or {}
     latest_5 = bundle.get("latest_5_recordings") or []
@@ -345,6 +402,36 @@ def process_system_disk_metrics(
         else "MEDIUM" if highest_threshold == 50
         else "LOW"
     )
+    current_disk_alert = current_usage > 70.0
+    if current_disk_alert:
+        primary = top_5_procs[0] if top_5_procs else {}
+        primary_name = primary.get("process_name") or primary.get("name") or hostname
+        primary_pid = primary.get("pid", "unknown")
+        read_rate = float(primary.get("disk_read_bytes_per_sec", 0.0) or 0.0)
+        write_rate = float(primary.get("disk_write_bytes_per_sec", 0.0) or 0.0)
+        history_start = recent_disk[0] if recent_disk else current_usage
+        history_average = sum(recent_disk) / len(recent_disk) if recent_disk else current_usage
+        trend = "rising" if current_usage > history_start + 2 else "falling" if current_usage < history_start - 2 else "stable"
+        pressure = "CRITICAL: begin emergency cleanup and involve the on-call." if current_usage >= 90 else "HIGH: start targeted cleanup before free capacity becomes constrained."
+        remediation = {
+            "subagent": "remediation_agent",
+            "status": "REMEDIATION_DRAFTED",
+            "action_required": "\n".join([
+                pressure,
+                f"Cause: disk usage is {current_usage:.1f}% now versus a {history_average:.1f}% history average ({trend}); {primary_name} (PID {primary_pid}) is the leading observed I/O process.",
+                f"Inspect {primary_name}'s logs and storage activity for the source of growth: rotating logs, temporary files, database files, uploads, or an unexpected write loop. Its observed rates are {read_rate:.1f} B/s read and {write_rate:.1f} B/s written.",
+                f"Clean or rotate only the identified safe files, reduce the responsible workload, and preserve required database/log data. Do not delete an entire directory or stop a critical service without ownership confirmation.",
+                f"Rerun disk telemetry after cleanup and confirm usage falls below 70%, free space increases, and the write rate declines. Escalate at 90% or when free space reaches the service's emergency reserve.",
+            ]),
+            "preventive_guardrail": None,
+        }
+    else:
+        remediation = {
+            "subagent": "remediation_agent",
+            "status": "NOT_REQUIRED",
+            "action_required": "",
+            "preventive_guardrail": None,
+        }
 
     if highest_threshold is None:
         detection = {
@@ -387,14 +474,14 @@ def process_system_disk_metrics(
         remediation.setdefault("status", "REMEDIATION_DRAFTED")
 
     remediation_plans = []
-    if highest_threshold is not None and highest_threshold >= 70:
+    if current_disk_alert:
         remediation_plans.append({
             "plan_id": "REMED-DISK-001",
             "service_name": top_5_procs[0].get("process_name") if top_5_procs else hostname,
             "severity": disk_severity,
             "root_cause": diagnosis.get("root_cause") or f"Disk utilization reached {max_d:.1f}%",
-            "action_required": remediation.get("action_required") or diagnosis.get("recommended_action") or "Monitor disk space.",
-            "preventive_guardrail": remediation.get("preventive_guardrail") or "Set alert threshold at 70% disk capacity.",
+            "action_required": remediation["action_required"],
+            "preventive_guardrail": None,
         })
 
     email_alerts = []
@@ -475,7 +562,7 @@ def process_system_memory_metrics(
     3. Invokes LLM (Gemini) with unmerged payload (no merge).
     4. Evaluates single highest crossed threshold (50%, 70%, 100%) and sends alert email via Nodemailer.
     """
-    recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
+    recipient_email = (recipient_email or get_alert_email()).strip()
     bundle = _resolve_telemetry_bundle(source)
     current_metrics = bundle.get("current_metrics") or {}
     latest_5 = bundle.get("latest_5_recordings") or []
@@ -514,14 +601,28 @@ def process_system_memory_metrics(
     diagnosis = llm_result.get("diagnosis", {})
     remediation = llm_result.get("remediation", {})
 
+    # Historical peaks may inform diagnosis, but remediation is only valid for
+    # the current live RAM reading when it is above the operational threshold.
+    current_memory_alert = current_usage > 70.0
+    if not current_memory_alert:
+        remediation = {
+            "subagent": "remediation_agent",
+            "status": "NOT_REQUIRED",
+            "action_required": "",
+            "preventive_guardrail": None,
+        }
+
     highest_threshold = None
-    max_ram = max(current_usage, peak_ram_usage)
-    if max_ram >= 90.0:
+    # Threshold severity and remediation must follow the current reading. A
+    # historical peak is context only and must not make a 71% reading look
+    # like a 90% incident.
+    if current_usage >= 90.0:
         highest_threshold = 90
-    elif max_ram >= 70.0:
+    elif current_usage > 70.0:
         highest_threshold = 70
-    elif max_ram >= 50.0:
+    elif current_usage >= 50.0:
         highest_threshold = 50
+    max_ram = max(current_usage, peak_ram_usage)
 
     mem_severity = (
         "CRITICAL" if highest_threshold == 90
@@ -554,40 +655,50 @@ def process_system_memory_metrics(
     )
 
     remediation_steps = []
-    if max_ram >= 70.0:
+    if current_memory_alert:
         primary_name = primary_process.get("process_name") or primary_process.get("name") or service_name
         primary_pid = primary_process.get("pid", "unknown")
         primary_rss = float(primary_process.get("memory_rss_mb", 0.0) or 0.0)
         primary_percent = float(primary_process.get("memory_percent", 0.0) or 0.0)
+        history_start = recent_ram[0] if recent_ram else current_usage
+        history_average = sum(recent_ram) / len(recent_ram) if recent_ram else current_usage
+        history_delta = current_usage - history_start
+        trend = "rising" if history_delta > 2 else "falling" if history_delta < -2 else "stable"
+        workload_type = _classify_memory_workload(primary_process)
+        process_text = f"{primary_name} (PID {primary_pid}, {primary_rss:.1f} MB RSS)"
+        service_text = str(primary_process.get("service_name") or primary_name)
+        critical_service = workload_type == "infrastructure service" or any(word in service_text.lower() for word in ("sshd", "systemd", "db", "postgres", "mysql", "nginx"))
+        synthetic_workload = workload_type == "synthetic/test memory workload"
+        if current_usage >= 90:
+            urgency = "CRITICAL: freeze non-essential work now and involve the on-call before the host reaches an out-of-memory condition."
+        elif trend == "rising":
+            urgency = "HIGH: usage is still rising, so investigate and reduce the identified workload before it reaches the 90% escalation tier."
+        else:
+            urgency = "HIGH: usage is already above the operational limit; validate the consumer before taking a disruptive action."
+        cause = (
+            f"Likely cause: the top process is a {workload_type} with sustained or increasing allocation; current RAM is {current_usage:.1f}% versus a {history_average:.1f}% history average."
+            if trend in ("rising", "stable")
+            else f"Likely cause: a recent workload burst is subsiding; RAM fell from {history_start:.1f}% to {current_usage:.1f}%, but {primary_name} is still the largest live consumer."
+        )
+        stop_guidance = (
+            f"This appears to be a synthetic/test memory workload ({process_text}), not a production service. Stop the test workload gracefully after confirming it belongs to the current test session, then verify RAM returns below 70%."
+            if synthetic_workload
+            else
+            f"Do not kill {process_text}; {service_text} appears critical. Check `systemctl status {service_text}` and active connections, then schedule a controlled restart only if service health confirms it is safe."
+            if critical_service
+            else f"Do not kill the process immediately. Confirm that {process_text} belongs to a non-critical workload; then stop it gracefully only if approved, and verify RAM drops below 70%."
+        )
         remediation_steps = [
-            f"Inspect {primary_name} (PID {primary_pid}); it is the largest reported RAM consumer at {primary_percent:.2f}% ({primary_rss:.1f} MB RSS).",
-            f"Check {primary_name} logs, child processes, and RSS over the next few samples for a memory leak or an unexpected workload increase.",
-            f"Reduce concurrency or workload for {primary_name}; restart it during a maintenance window if RSS continues to increase or available RAM keeps falling.",
-            f"Keep at least 15% RAM available ({total_gb * 0.15:.2f} GB on this host); escalate to the on-call immediately if usage reaches 90% or available RAM falls below that level.",
+            urgency,
+            f"{cause} The top process is {process_text}, using {primary_percent:.2f}% of RAM; compare its RSS with the next process before assigning the cause.",
+            f"Inspect {process_text} logs and child processes for evidence of a leak, queue backlog, cache growth, batch workload, or synthetic test allocation. Do not copy or execute the process command from telemetry. Compare the next history sample with {current_usage:.1f}% to confirm the trend.",
+            f"Reduce the specific workload owned by {primary_name} (pause its queue, lower worker concurrency, or limit the batch) rather than changing the whole host; verify available RAM increases and current usage returns below 70%.",
+            stop_guidance,
+            f"Escalate immediately at 90% current usage or below {total_gb * 0.15:.2f} GB available. Preserve the PID, RSS, command, history window, and service logs so the root cause can be tracked.",
         ]
         remediation["status"] = "REMEDIATION_DRAFTED"
-        remediation["action_required"] = " ".join(f"{i + 1}. {step}" for i, step in enumerate(remediation_steps[:3]))
-        remediation["preventive_guardrail"] = remediation_steps[3]
-        diagnosis["root_cause"] = (
-            f"RAM utilization is {max_ram:.1f}%, above the 70% operational threshold. "
-            f"{primary_name} (PID {primary_pid}) is the largest reported RAM consumer."
-        )
-
-    if max_ram >= 70.0:
-        primary_name = primary_process.get("process_name") or primary_process.get("name") or service_name
-        primary_pid = primary_process.get("pid", "unknown")
-        primary_rss = float(primary_process.get("memory_rss_mb", 0.0) or 0.0)
-        remediation["status"] = "REMEDIATION_DRAFTED"
-        remediation["action_required"] = (
-            f"1. Inspect {primary_name} (PID {primary_pid}); it is using {primary_rss:.1f} MB RSS. "
-            "2. Check for continuously increasing memory and inspect child processes. "
-            "3. Reduce the workload or restart the affected service during a maintenance window if RAM continues to rise."
-        )
-        remediation["preventive_guardrail"] = (
-            "1. Keep RAM below 70% during normal operation. "
-            "2. Alert at 70% and escalate to the on-call at 90%. "
-            f"3. Track {primary_name} RSS and investigate sustained growth or a memory leak."
-        )
+        remediation["action_required"] = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(remediation_steps))
+        remediation["preventive_guardrail"] = None
         diagnosis["root_cause"] = (
             f"RAM utilization is {max_ram:.1f}%, above the 70% operational threshold. "
             f"{primary_name} (PID {primary_pid}) is the largest reported RAM consumer."
@@ -625,8 +736,15 @@ def process_system_memory_metrics(
         remediation.setdefault("subagent", "remediation_agent")
         remediation.setdefault("status", "REMEDIATION_DRAFTED")
 
+    # A historical peak can affect diagnosis, but never creates a remediation
+    # payload when the current RAM reading is at or below 70%.
+    if not current_memory_alert:
+        remediation["status"] = "NOT_REQUIRED"
+        remediation["action_required"] = ""
+        remediation["preventive_guardrail"] = None
+
     remediation_plans = []
-    if highest_threshold is not None and highest_threshold >= 70:
+    if current_memory_alert:
         primary_svc_name = primary_process.get("process_name") or hostname
         remediation_plans.append({
             "plan_id": "REMED-RAM-0001",

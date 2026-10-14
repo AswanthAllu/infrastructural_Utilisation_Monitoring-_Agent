@@ -1,9 +1,29 @@
 ﻿from pathlib import Path
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+import re
+from services.email_service import get_alert_email, set_alert_email
 
 from tools.metrics_fetcher import fetch_metrics_history, store_metrics_json, get_latest_metrics_file
 
 router = APIRouter(prefix="/api/metrics", tags=["Metrics Ingestion & Storage"])
+
+
+class AlertRecipientUpdate(BaseModel):
+    email: str
+
+
+@router.get("/alert-recipient")
+async def get_alert_recipient():
+    return {"email": get_alert_email()}
+
+
+@router.put("/alert-recipient")
+async def update_alert_recipient(payload: AlertRecipientUpdate):
+    email = payload.email.strip()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(status_code=422, detail="A valid email address is required")
+    return {"success": True, "email": set_alert_email(email)}
 
 
 @router.post("/fetch")

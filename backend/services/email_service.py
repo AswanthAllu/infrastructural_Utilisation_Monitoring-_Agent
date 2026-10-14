@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -13,8 +14,24 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 logger = logging.getLogger(__name__)
 
 DEFAULT_ALERT_EMAIL = os.getenv("DEFAULT_ALERT_EMAIL", "")
+_session_alert_email = DEFAULT_ALERT_EMAIL.strip()
+_session_alert_email_lock = threading.Lock()
 EMAIL_ALERTS_LOG = Path(__file__).resolve().parent.parent / "logs" / "email_alerts.log"
 NODEMAILER_SCRIPT = Path(__file__).resolve().parent / "nodemailer_service.js"
+
+
+def get_alert_email() -> str:
+    """Return the active recipient for this backend process/session."""
+    with _session_alert_email_lock:
+        return _session_alert_email or os.getenv("DEFAULT_ALERT_EMAIL", "").strip()
+
+
+def set_alert_email(email: str) -> str:
+    """Set the recipient for subsequent alerts in the current backend session."""
+    global _session_alert_email
+    with _session_alert_email_lock:
+        _session_alert_email = email.strip()
+        return _session_alert_email
 
 
 def get_highest_crossed_threshold(
@@ -87,8 +104,11 @@ def send_threshold_alert_email(
     """
     # Resolve this at send time so a long-running backend cannot keep using a
     # recipient captured from an older .env during module import.
-    recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
+    recipient_email = (recipient_email or get_alert_email()).strip()
     subject = f"Limit crossed {threshold}% {resource_name} usage"
+    # The alert time represents when this alert was generated and dispatched,
+    # not the timestamp of the older VM sample that triggered it.
+    dispatch_timestamp = datetime.now(timezone.utc).isoformat()
     
     html_content = f"""
     <html>
@@ -96,7 +116,8 @@ def send_threshold_alert_email(
         <div style="background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 5px;">
           <h2 style="color: #721c24; margin-top: 0;">⚠️ System Resource Alert: {subject}</h2>
           <p><strong>Host:</strong> {hostname}</p>
-          <p><strong>Timestamp:</strong> {timestamp}</p>
+          <p><strong>Alert Generated:</strong> {dispatch_timestamp}</p>
+          <p><strong>Telemetry Sample:</strong> {timestamp or "Unavailable"}</p>
           <p><strong>Metric:</strong> {resource_name} Utilization</p>
           <p><strong>Observed Usage:</strong> <span style="font-size: 1.2em; font-weight: bold; color: #d9534f;">{usage_percent:.1f}%</span> (Threshold: {threshold}%)</p>
         </div>
@@ -121,7 +142,7 @@ def send_threshold_alert_email(
         "threshold": threshold,
         "usage_percent": usage_percent,
         "hostname": hostname,
-        "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+        "timestamp": dispatch_timestamp,
         "html": html_content,
         "text": f"Limit crossed {threshold}% {resource_name} usage on {hostname}. Usage: {usage_percent}%. Remediation: {remediation_summary}",
     }

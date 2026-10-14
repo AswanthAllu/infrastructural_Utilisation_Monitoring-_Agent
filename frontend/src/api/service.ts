@@ -73,6 +73,27 @@ class ApiService {
     return await res.json();
   }
 
+  async getAlertRecipient(): Promise<{ email: string }> {
+    const res = await fetch(`${this.baseUrl}/api/metrics/alert-recipient`, {
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to load alert recipient');
+    return await res.json();
+  }
+
+  async updateAlertRecipient(email: string): Promise<{ success: boolean; email: string }> {
+    const res = await fetch(`${this.baseUrl}/api/metrics/alert-recipient`, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => res.statusText);
+      throw new Error(`Failed to update alert recipient: ${errorText}`);
+    }
+    return await res.json();
+  }
+
   async analyzeCpu(customText?: string): Promise<AgentAnalysisResponse> {
     let res: Response;
     if (customText) {

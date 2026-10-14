@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import {
-  CheckCircle2,
   Clock,
+  Edit3,
   Mail,
   RefreshCw,
   Search,
-  ShieldAlert,
 } from 'lucide-react';
 import { Badge } from '../common/Badge';
+import { apiService } from '../../api/service';
 import type { EmailAlertsResponse } from '../../types';
 
 interface AlertsScreenProps {
@@ -23,8 +23,32 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [thresholdFilter, setThresholdFilter] = useState('ALL');
+  const [recipient, setRecipient] = useState('');
+  const [editingRecipient, setEditingRecipient] = useState(false);
+  const [recipientDraft, setRecipientDraft] = useState('');
+  const [recipientError, setRecipientError] = useState('');
 
   const alerts = data?.alerts || [];
+
+  React.useEffect(() => {
+    apiService.getAlertRecipient().then((result) => setRecipient(result.email)).catch(() => undefined);
+  }, []);
+
+  const saveRecipient = async () => {
+    const email = recipientDraft.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setRecipientError('Enter a valid email address.');
+      return;
+    }
+    try {
+      const result = await apiService.updateAlertRecipient(email);
+      setRecipient(result.email);
+      setEditingRecipient(false);
+      setRecipientError('');
+    } catch {
+      setRecipientError('Unable to update the dispatch target.');
+    }
+  };
 
   const filteredAlerts = alerts.filter((alert) => {
     // Keep the screen resilient to older audit records that may not have all
@@ -73,39 +97,25 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = ({
         </button>
       </div>
 
-      {/* Summary Stat Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-[var(--radius-lg)] border border-border bg-card p-4">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Total Threshold Triggers</span>
-            <ShieldAlert className="h-4 w-4 text-[var(--warning)]" />
-          </div>
-          <div className="mt-2 text-2xl font-bold font-heading text-foreground">
-            {data?.total_alerts || alerts.length} Dispatched
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">From automated background poller</p>
+      {/* Active session dispatch target */}
+      <div className="rounded-[var(--radius-lg)] border border-border bg-card p-4">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Primary Dispatch Target</span>
+          <Mail className="h-4 w-4 text-[var(--primary)]" />
         </div>
-
-        <div className="rounded-[var(--radius-lg)] border border-border bg-card p-4">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Primary Dispatch Target</span>
-            <Mail className="h-4 w-4 text-[var(--primary)]" />
+        {editingRecipient ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <input value={recipientDraft} onChange={(event) => setRecipientDraft(event.target.value)} autoFocus type="email" className="min-w-[260px] flex-1 rounded border border-border bg-background px-3 py-2 text-sm text-foreground" placeholder="Enter alert email" />
+            <button onClick={saveRecipient} className="rounded bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-white">Save</button>
+            <button onClick={() => setEditingRecipient(false)} className="rounded border border-border px-3 py-2 text-xs">Cancel</button>
           </div>
-          <div className="mt-2 text-sm font-bold font-mono text-foreground truncate">
-            {import.meta.env.VITE_DEFAULT_ALERT_EMAIL}
+        ) : (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="truncate text-sm font-bold font-mono text-foreground">{recipient || 'Loading recipient...'}</span>
+            <button onClick={() => { setRecipientDraft(recipient); setEditingRecipient(true); }} title="Edit dispatch target" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><Edit3 className="h-4 w-4" /></button>
           </div>
-        </div>
-
-        <div className="rounded-[var(--radius-lg)] border border-border bg-card p-4">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Single Consolidated Policy</span>
-            <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />
-          </div>
-          <div className="mt-2 text-2xl font-bold font-heading text-[var(--success)]">
-            Active
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">Sends highest threshold only</p>
-        </div>
+        )}
+        {recipientError && <p className="mt-1 text-xs text-red-500">{recipientError}</p>}
       </div>
 
       {/* Filter and Search Bar */}

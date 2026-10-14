@@ -802,6 +802,15 @@ def _generate_fallback_agent_response(
     elif is_memory:
         analysis_dict["memory_analysis"] = build_memory_utilization_analysis_text(metrics_payload)
 
+    memory_actions = (
+        f"1. Identify the highest-RAM process from the live process list and verify its PID and RSS before changing it. "
+        f"2. Review that process's recent logs and child processes for a leak or workload spike; current RAM is {current_val:.1f}% and peak is {peak:.1f}%. "
+        f"3. Reduce or pause non-critical work owned by the identified process, then confirm RAM falls below 70%. "
+        f"4. If RSS continues rising after verification, restart only the identified service during an approved maintenance window and confirm recovery."
+        if is_memory and threshold
+        else None
+    )
+
     return {
         "agent": agent_name,
         "resource": resource_type,
@@ -837,7 +846,7 @@ def _generate_fallback_agent_response(
         "remediation": {
             "subagent": "remediation_agent",
             "status": "REMEDIATION_DRAFTED" if threshold else "HEALTHY",
-            "action_required": (
+            "action_required": memory_actions or (
                 f"Scale host {resource_type} resources immediately and inspect top consumers."
                 if threshold
                 else "No issues detected. No remediation required."

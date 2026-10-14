@@ -19,7 +19,7 @@ from routers.memory_router import router as memory_router
 from routers.metrics_router import router as metrics_router
 from routers.orchestrator_router import router as orchestrator_router
 from tools.metrics_fetcher import fetch_current_metrics, fetch_metrics_history, store_metrics_json
-from services.email_service import send_threshold_alert_email
+from services.email_service import get_alert_email, send_threshold_alert_email
 
 
 async def periodic_metrics_poller(interval_seconds: int = 60):
@@ -47,7 +47,7 @@ async def periodic_metrics_poller(interval_seconds: int = 60):
                 "RAM": max(float(ram.get("percent", 0) or 0), float(latest_ram.get("percent", 0) or 0)),
                 "Disk": max(float(disk.get("percent", 0) or 0), float(latest_disk.get("percent", 0) or 0)),
             }
-            recipient = os.getenv("DEFAULT_ALERT_EMAIL", "").strip()
+            recipient = get_alert_email()
             for resource, usage in metrics.items():
                 is_above_70 = usage > 70.0
                 if is_above_70 and not previously_above_70[resource] and recipient:

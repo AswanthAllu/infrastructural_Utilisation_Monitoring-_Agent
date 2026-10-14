@@ -227,6 +227,10 @@ export interface EmailAlertsResponse {
   alerts: EmailAlertRecord[];
 }
 
+export interface AlertRecipientResponse {
+  email: string;
+}
+
 export interface OrchestratorAnalysisResponse {
   workflow_id?: string;
   designated_agent: string;

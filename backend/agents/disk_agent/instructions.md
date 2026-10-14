@@ -42,6 +42,7 @@ Analyze the telemetry to evaluate whether an issue exists:
   4. **Identify Supporting Evidence**: Highlight secondary background activity.
   5. **Diagnose Likely Root Cause**: Provide an evidence-backed root cause for disk status and workload behavior.
   6. **Assign Confidence**: Mark diagnosis confidence (`High`, `Medium`, or `Low`).
+  7. **Context-aware remediation**: Build a new numbered action plan from current disk percentage, used/free capacity, history trend, top I/O process, read/write rates, and correlated service evidence. Explain what is consuming capacity, what safe files/workload should be handled now, what must not be deleted, and how to verify recovery. Never recommend deleting an entire directory without ownership and data-safety confirmation.
 
 ---
 

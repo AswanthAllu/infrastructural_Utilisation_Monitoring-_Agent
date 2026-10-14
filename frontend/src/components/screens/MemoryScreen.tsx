@@ -4,7 +4,6 @@ import {
   Layers,
   RefreshCw,
   Server,
-  ShieldCheck,
 } from 'lucide-react';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
@@ -41,6 +40,7 @@ export const MemoryScreen: React.FC<MemoryScreenProps> = ({
   const totalGb = memStats?.total_gb ?? evidence?.total_gb;
   const freeGb = memStats?.available_gb ?? evidence?.available_gb ?? evidence?.free_gb;
   const peakPercent = memStats?.peak_percent ?? data?.peak_usage_percent ?? usagePercent;
+  const shouldShowRemediation = usagePercent > 70;
 
   return (
     <div className="space-y-6">
@@ -138,95 +138,18 @@ export const MemoryScreen: React.FC<MemoryScreenProps> = ({
         <Badge variant="warning" size="sm">ALERT SENT</Badge>
       </div> */}
 
-      {/* Detection & Remediation Blocks */}
-      {detection && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Card
-            title="Memory Anomaly Diagnosis"
-            subtitle={`Status: ${detection.diagnosis_status || 'CONFIRMED'} (Confidence: ${Math.round((detection.confidence ?? 0.95) * 100)}%)`}
-            action={
-              <Badge variant="destructive" size="sm">
-                HIGH MEMORY PRESSURE
-              </Badge>
-            }
-          >
-            <div className="space-y-3 text-xs">
-              <div>
-                <span className="font-semibold text-muted-foreground">Summary:</span>
-                <p className="mt-1 text-sm font-medium text-foreground">{detection.summary}</p>
-              </div>
-              {detection.root_cause && (
-              <div>
-                <span className="font-semibold text-muted-foreground">Root Cause:</span>
-                <p className="mt-1 text-xs text-foreground bg-muted/30 p-2.5 rounded-[var(--radius-sm)] border border-border">
-                  {detection.root_cause}
-                </p>
-              </div>
-              )}
-              {detection.explanation && (
-              <div>
-                <span className="font-semibold text-muted-foreground">Explanation:</span>
-                <p className="mt-1 text-muted-foreground leading-relaxed">{detection.explanation}</p>
-              </div>
-              )}
-              {detection.reasons && (
-                <div>
-                  <span className="font-semibold text-muted-foreground">Reasons:</span>
-                  <ul className="mt-1 list-disc list-inside space-y-1 text-foreground/80">
-                    {detection.reasons.map((r, i) => (
-                      <li key={i}>{r}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          </Card>
-
-          <Card
-            title="Formulated Memory Remediation"
-            subtitle="Streaming Chunk Mitigation & Guardrails"
-            action={
-              <Badge variant="primary" size="sm">
-                REMEDIATION DRAFTED
-              </Badge>
-            }
-          >
-            <div className="space-y-4 text-xs">
-              {remediation?.action_required && (
-                <div>
-                  <span className="font-semibold text-muted-foreground">Required Action:</span>
-                    <RemediationList text={remediation.action_required} className="text-sm font-medium" />
-                </div>
-              )}
-
-              {remediation?.preventive_guardrail && (
-                <div className="rounded-[var(--radius-md)] border border-[var(--primary)]/30 bg-[var(--primary-tint)] p-3">
-                  <div className="flex items-center gap-1.5 font-semibold text-[var(--primary)]">
-                    <ShieldCheck className="h-4 w-4" />
-                    Proactive Guardrail:
-                  </div>
-                    <RemediationList text={remediation.preventive_guardrail} />
-                </div>
-              )}
-
-              {/* <div className="rounded-[var(--radius-sm)] bg-muted/40 p-3 space-y-2">
-                <div className="font-semibold text-foreground">Mitigation Checklist:</div>
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
-                  <span>Migrate telemetry poller to yield generator iterators</span>
-                </div>
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
-                  <span>Enforce Linux cgroup 4GB process memory hard ceiling</span>
-                </div>
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
-                  <span>Invoke gc.collect() following large historical json parses</span>
-                </div>
-              </div> */}
-            </div>
-          </Card>
-        </div>
+      {/* AI remediation is intentionally the primary Memory Agent action panel. */}
+      {shouldShowRemediation && remediation && (
+        <Card
+          title="Context-Aware Memory Remediation"
+          subtitle="Actions selected from the current process, service importance, and recent RAM history"
+          action={<Badge variant="primary" size="sm">REMEDIATION DRAFTED</Badge>}
+        >
+          <div className="max-h-80 overflow-y-auto pr-3">
+            <span className="text-xs font-semibold text-muted-foreground">Run in this order:</span>
+            <RemediationList text={remediation.action_required} className="text-sm font-medium" />
+          </div>
+        </Card>
       )}
 
       {/* Memory Utilization Analysis & Top Consuming Processes */}
