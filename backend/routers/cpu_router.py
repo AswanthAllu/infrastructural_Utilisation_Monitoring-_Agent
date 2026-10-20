@@ -23,7 +23,7 @@ def analyze_cpu_latest_history(
     1. Calls http://20.15.164.79:8080/api/history to ingest the telemetry history.
     2. Python preprocessing script extracts and segregates ONLY CPU data (stripping disk and ram).
     3. Runs LLM-powered Detection -> Diagnosis -> Remediation on CPU data.
-    4. Evaluates the highest threshold exceeded (e.g., if 50% and 70% are exceeded, sends the 70% limit alert).
+    4. Evaluates the highest threshold exceeded (e.g., if 70% and 90% are exceeded, sends the 90% limit alert).
     5. Dispatches a single alert email via Nodemailer to sirivennelanarava@gmail.com with the highest limit details.
     6. Returns detection, root cause, remediation, and all individual remediation plans.
     """

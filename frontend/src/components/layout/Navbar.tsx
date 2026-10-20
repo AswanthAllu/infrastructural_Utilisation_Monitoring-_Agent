@@ -44,13 +44,15 @@ export const Navbar: React.FC<NavbarProps> = ({
         return 'Master Orchestrator Agent';
       case 'alerts':
         return 'Threshold Email Alerts';
+      case 'history':
+        return 'Remediation Decision History & Audit Log';
       default:
         return 'Reliability Dashboard';
     }
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-border bg-card/80 px-6 backdrop-blur-md transition-colors">
+    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b border-border bg-card/95 px-6 backdrop-blur-md transition-colors shadow-sm">
       {/* Left Breadcrumb & Page title */}
       <div className="flex items-center gap-3">
         {/* <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">

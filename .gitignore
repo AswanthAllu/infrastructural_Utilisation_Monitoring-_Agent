@@ -2,6 +2,10 @@
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+id_rsa*
+backend/config/*.pem
 
 # Python
 .venv/

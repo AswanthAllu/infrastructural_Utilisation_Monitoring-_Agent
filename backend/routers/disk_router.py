@@ -20,7 +20,7 @@ def analyze_disk_latest_history():
     1. Calls http://20.15.164.79:8080/api/history to ingest the telemetry history.
     2. Extracts and segregates ONLY Disk data (used_gb, free_gb, total_gb, percent).
     3. Runs LLM-powered Detection -> Diagnosis -> Remediation on Disk data.
-    4. Evaluates the highest threshold exceeded (50%, 70%, or 100%).
+    4. Evaluates the highest threshold exceeded (70%, 90%, or 100%).
     5. Dispatches a single alert email via Nodemailer to sirivennelanarava@gmail.com with the highest limit details.
     6. Returns detection, root cause, and remediation.
     """

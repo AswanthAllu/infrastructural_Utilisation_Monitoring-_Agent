@@ -28,11 +28,8 @@ def route_incident_workload(input_data: Any) -> str:
     Invokes the LLM to autonomously inspect the workload and classify which subagent
     should handle it: 'cpu_agent', 'disk_agent', or 'memory_agent'.
     """
-    from services.llm_agent_service import get_genai_client
-    client = get_genai_client()
-    if client:
-        try:
-            prompt = f"""
+    from services.llm_agent_service import get_genai_client, invoke_azure_responses_api
+    prompt = f"""
 You are the Master Orchestrator Router.
 Classify this log/telemetry input and decide which specialized agent must process it:
 - "cpu_agent" for CPU utilization, slots utilized, BigQuery CPU, compute contention, processor cores.
@@ -44,17 +41,26 @@ INPUT PREVIEW:
 
 Respond ONLY with one of: ["cpu_agent", "disk_agent", "memory_agent"]. Do not include extra text.
 """
-            resp = client.models.generate_content(model=MODEL_NAME, contents=prompt)
-            if resp and resp.text:
-                cleaned = resp.text.strip().lower().replace('"', '').replace("'", "")
-                if "disk" in cleaned:
-                    return "disk_agent"
-                if "memory" in cleaned or "ram" in cleaned:
-                    return "memory_agent"
-                if "cpu" in cleaned:
-                    return "cpu_agent"
-        except Exception:
-            pass
+    raw_text = invoke_azure_responses_api(prompt=prompt, system_instructions="You are the Master Orchestrator Router.")
+    if not raw_text:
+        client = get_genai_client()
+        if client:
+            try:
+                resp = client.models.generate_content(model=MODEL_NAME, contents=prompt)
+                if resp and resp.text:
+                    raw_text = resp.text
+            except Exception:
+                pass
+
+    if raw_text:
+        cleaned = raw_text.strip().lower().replace('"', '').replace("'", "")
+        if "disk" in cleaned:
+            return "disk_agent"
+        if "memory" in cleaned or "ram" in cleaned:
+            return "memory_agent"
+        if "cpu" in cleaned:
+            return "cpu_agent"
+
 
     # Fallback heuristic if LLM is offline
     raw_str = str(input_data).lower()

@@ -102,14 +102,19 @@ JSON ecosystem block for healthy state:
 }
 ```
 
-### B. When There ARE Issues / Causes (Elevated State >= 70%)
+### B. When There ARE Issues / Causes (Elevated State >= 70%, >= 90%, or 100%)
 Your response must include a top-level string field `memory_analysis` formatted strictly as:
 
 ```text
 Memory Utilization Analysis
 
 Observed:
-RAM utilization increased from <start_val>% to <peak_val>% (<used_gb> GB of <total_gb> GB used) between <start_time> and <peak_time>.
+<Directional observation based on telemetry:
+ - If metric went up: "RAM utilization increased from <start_val>% to <end_val>% (<used_gb> GB of <total_gb> GB used) between <start_time> and <end_time>."
+ - If metric went down: "RAM utilization decreased from <start_val>% to <end_val>% (<used_gb> GB of <total_gb> GB used) between <start_time> and <end_time>."
+ - If metric stayed same: "RAM utilization remained steady at <val>% (<used_gb> GB of <total_gb> GB used) between <start_time> and <end_time>."
+ Never write "increased" when the value went down.>
+
 
 Primary process:
 <Primary Process Name> (PID <PID>)

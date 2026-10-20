@@ -6,6 +6,7 @@ import { CpuScreen } from './components/screens/CpuScreen';
 import { MemoryScreen } from './components/screens/MemoryScreen';
 import { DiskScreen } from './components/screens/DiskScreen';
 import { AlertsScreen } from './components/screens/AlertsScreen';
+import { HistoryScreen } from './components/screens/HistoryScreen';
 import { apiService } from './api/service';
 import type {
   AgentAnalysisResponse,
@@ -219,12 +220,12 @@ export function App() {
   const handleRefreshAlerts = async () => {
     setIsAlertsLoading(true);
     try {
-      const res = await apiService.clearEmailAlerts();
+      const res = await apiService.getEmailAlerts();
       setAlertsData(res);
-      showToast('Threshold email alerts cleared.');
+      showToast('Threshold email alerts reloaded.');
     } catch (err) {
-      console.error('Failed to clear threshold alerts:', err);
-      showToast('Unable to clear threshold email alerts.');
+      console.error('Failed to reload threshold alerts:', err);
+      showToast('Unable to reload threshold email alerts.');
     } finally {
       setIsAlertsLoading(false);
     }
@@ -255,7 +256,7 @@ export function App() {
       />
 
       {/* Main Workspace Area */}
-      <div className="flex flex-1 flex-col overflow-x-hidden">
+      <div className="flex flex-1 flex-col min-w-0">
         {/* Sticky Navbar */}
         <Navbar
           activeTab={activeTab}
@@ -269,7 +270,7 @@ export function App() {
         />
 
         {/* Content Container */}
-        <main className="flex-1 p-6 md:p-8 max-w-auto w-full mx-auto overflow-y-auto">
+        <main className="flex-1 p-6 md:p-8 max-w-auto w-full mx-auto">
           {/* 1. Overview Screen */}
           {activeTab === 'overview' && (
             <OverviewScreen
@@ -299,6 +300,7 @@ export function App() {
               isLoading={isCpuLoading}
               onRunAnalysis={handleRunCpuAnalysis}
               lastUpdated={lastUpdated.cpu}
+              onNavigateToHistory={() => setActiveTab('history')}
             />
           )}
 
@@ -328,6 +330,13 @@ export function App() {
               data={alertsData}
               isLoading={isAlertsLoading}
               onRefresh={handleRefreshAlerts}
+            />
+          )}
+
+          {/* 6. Remediation Action History Screen */}
+          {activeTab === 'history' && (
+            <HistoryScreen
+              onNavigateToAgent={(agent) => setActiveTab(agent as NavigationTab)}
             />
           )}
         </main>

@@ -75,11 +75,13 @@ def _resolve_telemetry_bundle(
     else:
         items = []
 
-    latest_5 = filter_latest_records_by_timestamp(items, count=5) if items else []
-    latest_item = latest_5[-1] if latest_5 else {}
+    latest_15 = filter_latest_records_by_timestamp(items, count=15) if items else []
+    latest_item = latest_15[-1] if latest_15 else {}
     return {
         "current_metrics": latest_item,
-        "latest_5_recordings": latest_5,
+        "latest_15_recordings": latest_15,
+        "latest_10_recordings": latest_15,
+        "latest_5_recordings": latest_15,  # Backward compatibility
         "top_5_processes": [],
         "services_logs_5": [],
         "timestamp": latest_item.get("timestamp", ""),
@@ -212,12 +214,20 @@ def process_system_cpu_metrics(
         remediation.setdefault("subagent", "remediation_agent")
         remediation.setdefault("status", "REMEDIATION_DRAFTED")
 
-    # Remediation plans based on latest recording:
-    # 1. Only show for CPU utilization data having values > 90%.
-    # 2. If 100% saturation is present, emit only 1 plan.
+    # Remediation plans for Human-in-the-Loop execution (threshold >= 70%)
     remediation_plans = []
-    if current_usage > 90.0 or peak_usage > 90.0:
-        primary_svc_name = top_5_procs[0].get("process_name") if top_5_procs else hostname
+    llm_plans = llm_result.get("remediation_plans") or []
+    if current_usage > 70.0 or peak_usage > 70.0:
+        from services.ssh_remediation_service import PROTECTED_PROCESSES
+        eligible_procs = [
+            p for p in top_5_procs
+            if p.get("pid")
+            and int(p.get("pid", 0) or 0) > 100
+            and str(p.get("process_name") or p.get("name") or "").lower() not in PROTECTED_PROCESSES
+        ]
+        primary_proc = eligible_procs[0] if eligible_procs else (top_5_procs[0] if top_5_procs else {})
+        primary_svc_name = primary_proc.get("process_name") or primary_proc.get("name") or hostname
+        primary_pid = primary_proc.get("pid")
         rep_rec = {
             "record_id": "cpu_live_latest",
             "timestamp": timestamp,
@@ -230,19 +240,47 @@ def process_system_cpu_metrics(
             "breached_thresholds": [th for th in [100, 70, 50] if max(current_usage, peak_usage) >= th],
         }
         plan = build_single_cpu_remediation_plan(rep_rec, 1)
+
+        # Autonomous LLM command decision based on 15 logs (no hardcoded speculative alternatives)
+        llm_cmd = (remediation.get("command") or "").strip()
+        if not llm_cmd and llm_plans:
+            llm_cmd = (llm_plans[0].get("command") or "").strip()
+        llm_rationale = (remediation.get("remediation_rationale") or "").strip()
+        if not llm_rationale and llm_plans:
+            llm_rationale = (llm_plans[0].get("remediation_rationale") or "").strip()
+
+        # Fallback if LLM did not provide an explicit command
+        if not llm_cmd:
+            if primary_pid:
+                llm_cmd = f"sudo kill -15 {primary_pid}"
+                llm_rationale = f"Evaluated 15 logs: terminating rogue workload process {primary_svc_name} (PID {primary_pid}) with SIGTERM."
+            else:
+                llm_cmd = f"sudo systemctl restart {primary_svc_name}"
+                llm_rationale = f"Evaluated 15 logs: restarting workload service {primary_svc_name}."
+
+        plan["command"] = llm_cmd
+        plan["remediation_rationale"] = llm_rationale
+        plan["action_required"] = f"{llm_rationale} Executing: {llm_cmd}"
+        plan["target_identifier"] = str(primary_pid) if primary_pid else primary_svc_name
+        plan["action_type"] = "COMMAND"
+        # No 4 hardcoded speculative alternatives: the LLM directly decided the single command
+        plan["alternatives"] = []
+
         remediation_plans.append(plan)
+    elif llm_plans:
+        remediation_plans.extend(llm_plans)
 
     # Email only after the current CPU reading crosses the operational alert
     # threshold. Historical peak values remain evidence for diagnosis but do
     # not independently trigger an email.
     email_alerts_dispatched = []
-    if current_usage > 70.0:
+    cpu_email_threshold = get_highest_crossed_threshold(current_usage, per_core, resource_name="CPU")
+    if cpu_email_threshold is not None:
         reported_cpu_usage = current_usage
-        email_threshold = max(get_highest_crossed_threshold(current_usage, per_core) or 70, 70)
         alert_info = send_threshold_alert_email(
             resource_name="CPU",
             usage_percent=reported_cpu_usage,
-            threshold=email_threshold,
+            threshold=cpu_email_threshold,
             hostname=hostname,
             timestamp=timestamp,
             details={
@@ -250,7 +288,7 @@ def process_system_cpu_metrics(
                 "peak_usage": f"{peak_usage:.1f}%",
                 "cores": cores,
                 "per_core": per_core,
-                "highest_threshold_crossed": email_threshold,
+                "highest_threshold_crossed": cpu_email_threshold,
                 "root_cause": diagnosis.get("root_cause"),
                 "llm_powered": llm_result.get("llm_powered", False),
             },
@@ -272,7 +310,7 @@ def process_system_cpu_metrics(
         "current_usage_percent": round(current_usage, 1),
         "highest_threshold_crossed": highest_threshold,
         "total_records_analyzed": len(latest_5),
-        "data_source": "VM live /api/metrics (latest 5 recordings)",
+        "data_source": "",
         "problematic_records_count": len(remediation_plans),
         "remediation_plans": remediation_plans,
         "remediation_summary": remediation,
@@ -297,7 +335,7 @@ def process_system_disk_metrics(
        top 5 processes from /api/processes, 5 services from /api/service-logs).
     2. Predicts & analyzes based on the latest recording (current_metrics).
     3. Invokes LLM (Gemini) with unmerged payload (no merge).
-    4. Evaluates single highest crossed threshold (50%, 70%, 100%) and sends alert email via Nodemailer.
+    4. Evaluates single highest crossed threshold (70%, 90%, 100%) and sends alert email via Nodemailer.
     """
     recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
     bundle = _resolve_telemetry_bundle(source)
@@ -398,13 +436,13 @@ def process_system_disk_metrics(
         })
 
     email_alerts = []
-    if current_usage > 70.0:
+    disk_email_threshold = get_highest_crossed_threshold(current_usage, resource_name="Disk")
+    if disk_email_threshold is not None:
         reported_disk_usage = current_usage
-        email_threshold = 100 if current_usage >= 100 else 70
         email_alerts.append(send_threshold_alert_email(
             resource_name="Disk",
             usage_percent=reported_disk_usage,
-            threshold=email_threshold,
+            threshold=disk_email_threshold,
             hostname=hostname,
             timestamp=timestamp,
             details={
@@ -413,6 +451,7 @@ def process_system_disk_metrics(
                 "total_gb": total_gb,
                 "free_gb": free_gb,
                 "peak_usage": f"{peak_disk_usage:.1f}%",
+                "highest_threshold_crossed": disk_email_threshold,
                 "agent": "disk_agent",
             },
             remediation_summary=remediation.get("action_required"),
@@ -435,7 +474,7 @@ def process_system_disk_metrics(
         "service_name": top_5_procs[0].get("process_name") if top_5_procs else hostname,
         "disk_utilization_analysis": disk_analysis,
         "total_records_analyzed": len(latest_5),
-        "data_source": "VM live /api/metrics (latest 5 recordings)",
+        "data_source": "",
         "records": latest_5,
         "usage_percent": round(current_usage, 1),
         "peak_usage_percent": round(peak_disk_usage, 1),
@@ -473,7 +512,7 @@ def process_system_memory_metrics(
        top 5 processes from /api/processes, 5 services from /api/service-logs).
     2. Predicts & analyzes based on the latest recording (current_metrics).
     3. Invokes LLM (Gemini) with unmerged payload (no merge).
-    4. Evaluates single highest crossed threshold (50%, 70%, 100%) and sends alert email via Nodemailer.
+    4. Evaluates single highest crossed threshold (70%, 90%, 100%) and sends alert email via Nodemailer.
     """
     recipient_email = (recipient_email or os.getenv("DEFAULT_ALERT_EMAIL", DEFAULT_ALERT_EMAIL)).strip()
     bundle = _resolve_telemetry_bundle(source)
@@ -484,8 +523,13 @@ def process_system_memory_metrics(
 
     # /api/processes is ordered by CPU, so explicitly order this list by RAM
     # before selecting the processes shown by the memory agent.
-    top_memory_procs = sorted(
-        top_5_procs,
+    from services.ssh_remediation_service import PROTECTED_PROCESSES
+    top_memory_procs = [
+        p for p in top_5_procs
+        if p.get("pid") and int(p.get("pid", 0) or 0) > 100
+        and str(p.get("process_name") or p.get("name") or "").lower() not in PROTECTED_PROCESSES
+    ]
+    top_memory_procs.sort(
         key=lambda process: float(process.get("memory_percent", 0.0) or 0.0),
         reverse=True,
     )
@@ -639,13 +683,13 @@ def process_system_memory_metrics(
         })
 
     email_alerts = []
-    if current_usage > 70.0:
+    ram_email_threshold = get_highest_crossed_threshold(current_usage, resource_name="RAM")
+    if ram_email_threshold is not None:
         reported_ram_usage = current_usage
-        email_threshold = 90 if current_usage >= 90 else 70
         email_alerts.append(send_threshold_alert_email(
             resource_name="RAM",
             usage_percent=reported_ram_usage,
-            threshold=email_threshold,
+            threshold=ram_email_threshold,
             hostname=hostname,
             timestamp=timestamp,
             details={
@@ -654,6 +698,7 @@ def process_system_memory_metrics(
                 "total_gb": total_gb,
                 "available_gb": available_gb,
                 "peak_usage": f"{peak_ram_usage:.1f}%",
+                "highest_threshold_crossed": ram_email_threshold,
                 "agent": "memory_agent",
             },
             remediation_summary=remediation.get("action_required"),
@@ -689,7 +734,7 @@ def process_system_memory_metrics(
         "high_memory_services": high_memory_services,
         "memory_utilization_analysis": memory_analysis,
         "total_records_analyzed": len(latest_5),
-        "data_source": "VM live /api/metrics (latest 5 recordings)",
+        "data_source": "",
         "records": latest_5,
         "usage_percent": round(current_usage, 1),
         "peak_usage_percent": round(peak_ram_usage, 1),

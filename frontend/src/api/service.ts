@@ -1,10 +1,14 @@
 import type {
   AgentAnalysisResponse,
+  AlertThresholdRule,
   EmailAlertsResponse,
   HealthCheckResponse,
   IncidentReviewResponse,
   MetricsFetchResult,
   OrchestratorAnalysisResponse,
+  RemediationDecisionPayload,
+  RemediationDecisionResult,
+  ThresholdRulesResponse,
 } from '../types';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -69,6 +73,82 @@ class ApiService {
     if (!res.ok) {
       const errorText = await res.text().catch(() => res.statusText);
       throw new Error(`Failed to clear email alerts: ${errorText}`);
+    }
+    return await res.json();
+  }
+
+  async getThresholdRules(): Promise<ThresholdRulesResponse> {
+    const res = await fetch(`${this.baseUrl}/api/metrics/thresholds`, {
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => res.statusText);
+      throw new Error(`Failed to fetch threshold rules: ${errorText}`);
+    }
+    return await res.json();
+  }
+
+  async createThresholdRule(rule: {
+    resource: string;
+    threshold_percent: number;
+    severity?: string;
+    recipient?: string;
+    enabled?: boolean;
+  }): Promise<{ success: boolean; rule: AlertThresholdRule; distinct_thresholds: number[] }> {
+    const res = await fetch(`${this.baseUrl}/api/metrics/thresholds`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(rule),
+    });
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => res.statusText);
+      throw new Error(`Failed to create threshold rule: ${errorText}`);
+    }
+    return await res.json();
+  }
+
+  async updateThresholdRule(
+    id: number,
+    rule: {
+      resource?: string;
+      threshold_percent?: number;
+      severity?: string;
+      recipient?: string;
+      enabled?: boolean;
+    }
+  ): Promise<{ success: boolean; distinct_thresholds: number[] }> {
+    const res = await fetch(`${this.baseUrl}/api/metrics/thresholds/${id}`, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify(rule),
+    });
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => res.statusText);
+      throw new Error(`Failed to update threshold rule: ${errorText}`);
+    }
+    return await res.json();
+  }
+
+  async deleteThresholdRule(id: number): Promise<{ success: boolean; distinct_thresholds: number[] }> {
+    const res = await fetch(`${this.baseUrl}/api/metrics/thresholds/${id}`, {
+      method: 'DELETE',
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => res.statusText);
+      throw new Error(`Failed to delete threshold rule: ${errorText}`);
+    }
+    return await res.json();
+  }
+
+  async toggleThresholdRule(id: number): Promise<{ success: boolean; distinct_thresholds: number[] }> {
+    const res = await fetch(`${this.baseUrl}/api/metrics/thresholds/${id}/toggle`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => res.statusText);
+      throw new Error(`Failed to toggle threshold rule: ${errorText}`);
     }
     return await res.json();
   }
@@ -161,6 +241,50 @@ class ApiService {
     if (!res.ok) {
       const errorText = await res.text().catch(() => res.statusText);
       throw new Error(`Orchestration API error: ${errorText}`);
+    }
+    return await res.json();
+  }
+
+  async submitRemediationDecision(
+    payload: RemediationDecisionPayload
+  ): Promise<RemediationDecisionResult> {
+    const res = await fetch(`${this.baseUrl}/api/remediation/decision`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `Remediation failed: HTTP ${res.status}`);
+    }
+    return await res.json();
+  }
+
+  async testRemediationConnection(): Promise<{ success: boolean; message: string; host?: string; output?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/remediation/test-connection`, {
+      headers: this.getHeaders(),
+    });
+    return await res.json();
+  }
+
+  async getRemediationAuditLogs(limit = 100): Promise<{ total_records: number; logs: any[] }> {
+    const res = await fetch(`${this.baseUrl}/api/remediation/audit-logs?limit=${limit}`, {
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      return { total_records: 0, logs: [] };
+    }
+    return await res.json();
+  }
+
+  async clearRemediationAuditLogs(): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${this.baseUrl}/api/remediation/audit-logs`, {
+      method: 'DELETE',
+      headers: this.getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to clear audit logs' }));
+      throw new Error(err.detail || 'Failed to clear audit logs');
     }
     return await res.json();
   }

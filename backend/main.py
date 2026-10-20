@@ -18,8 +18,12 @@ from routers.disk_router import router as disk_router
 from routers.memory_router import router as memory_router
 from routers.metrics_router import router as metrics_router
 from routers.orchestrator_router import router as orchestrator_router
+from routers.remediation_router import router as remediation_router
 from tools.metrics_fetcher import fetch_current_metrics, fetch_metrics_history, store_metrics_json
-from services.email_service import send_threshold_alert_email
+from services.email_service import (
+    get_highest_crossed_threshold,
+    send_threshold_alert_email,
+)
 
 
 async def periodic_metrics_poller(interval_seconds: int = 60):
@@ -29,8 +33,6 @@ async def periodic_metrics_poller(interval_seconds: int = 60):
         try:
             loop = asyncio.get_running_loop()
             data = await loop.run_in_executor(None, fetch_metrics_history)
-            saved = await loop.run_in_executor(None, store_metrics_json, data)
-            logger.info(f"Background metrics poller saved: {saved}")
 
             current = await loop.run_in_executor(None, fetch_current_metrics)
             cpu = current.get("cpu") or {}
@@ -49,22 +51,27 @@ async def periodic_metrics_poller(interval_seconds: int = 60):
             }
             recipient = os.getenv("DEFAULT_ALERT_EMAIL", "").strip()
             for resource, usage in metrics.items():
-                is_above_70 = usage > 70.0
-                if is_above_70 and not previously_above_70[resource] and recipient:
+                cores_list = cpu.get("per_core") if resource == "CPU" else None
+                matched_th = get_highest_crossed_threshold(
+                    usage, per_core=cores_list, resource_name=resource
+                )
+                if matched_th is not None and previously_above_70.get(resource) != matched_th and recipient:
                     await loop.run_in_executor(
                         None,
                         send_threshold_alert_email,
                         resource,
                         usage,
-                        70,
+                        matched_th,
                         current.get("hostname", "system-host"),
                         current.get("timestamp", ""),
-                        {"current_usage": f"{usage:.1f}%", "source": "background_vm_poller"},
+                        {"current_usage": f"{usage:.1f}%", "source": "background_vm_poller", "highest_threshold_crossed": matched_th},
                         None,
                         recipient,
                     )
-                    logger.info(f"Automatic {resource} >70% alert sent to {recipient}")
-                previously_above_70[resource] = is_above_70
+                    logger.info(f"Automatic {resource} alert (tier {matched_th}%) sent to {recipient}")
+                    previously_above_70[resource] = matched_th
+                elif matched_th is None:
+                    previously_above_70[resource] = None
         except Exception as exc:
             logger.warning(f"Background metrics poller encountered error: {exc}")
         await asyncio.sleep(interval_seconds)
@@ -120,6 +127,7 @@ app.include_router(memory_router)
 app.include_router(metrics_router)
 app.include_router(orchestrator_router)
 app.include_router(incident_router)
+app.include_router(remediation_router)
 
 
 if __name__ == "__main__":

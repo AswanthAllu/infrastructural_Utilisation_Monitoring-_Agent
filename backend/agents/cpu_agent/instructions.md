@@ -35,7 +35,7 @@ Analyze the telemetry to evaluate whether an issue exists:
   3. Clearly and explicitly state that **there are no issues detected**.
   4. Set `remediation_plans` to an empty list `[]`, and remediation action to `"No issues detected. No remediation required."`.
 
-- **Condition B: When there ARE issues / causes** (CPU utilization spiked or crossed operational thresholds >= 50%, >= 70%, or 100%):
+- **Condition B: When there ARE issues / causes** (CPU utilization spiked or crossed operational thresholds >= 70%, >= 90%, or 100%):
   1. **Identify the CPU Spike Window**: Determine the starting CPU utilization and peak CPU utilization, including exact time boundaries (`between HH:MM:SS and HH:MM:SS`).
   2. **Isolate Primary Consumer**: Identify the primary process name, PID, and peak CPU reached. If the process has a thread count present, display it directly under the CPU reached metric.
   3. **Correlate Service Events**: Trace back the specific service event, API request, or workload trigger from the service logs corresponding to that timestamp.
@@ -98,7 +98,12 @@ Your response must include a top-level string field `cpu_analysis` formatted str
 CPU Utilization Analysis
 
 Observed:
-CPU increased from <start_val>% to <peak_val>% between <start_time> and <peak_time>.
+<Directional observation based on telemetry:
+ - If metric went up: "CPU increased from <start_val>% to <end_val>% between <start_time> and <end_time>."
+ - If metric went down: "CPU decreased from <start_val>% to <end_val>% between <start_time> and <end_time>."
+ - If metric stayed same: "CPU remained steady at <val>% between <start_time> and <end_time>."
+ Never write "increased" when the value went down (e.g. 98% to 80% is a decrease, NOT an increase).>
+
 
 Primary process:
 <Primary Process Name> (PID <PID>)

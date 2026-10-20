@@ -35,7 +35,7 @@ Analyze the telemetry to evaluate whether an issue exists:
   3. Clearly and explicitly state that **there are no issues detected**.
   4. Set `remediation_plans` to an empty list `[]`, and remediation action to `"No issues detected. No remediation required."`.
 
-- **Condition B: When there ARE issues / causes** (Disk utilization is elevated or crossed operational thresholds >= 70% or 100%):
+- **Condition B: When there ARE issues / causes** (Disk utilization is elevated or crossed operational thresholds >= 70%, >= 90%, or 100%):
   1. **Identify the Storage Utilization Window**: Determine disk utilization percentage, used capacity, and free capacity across the observation window.
   2. **Isolate Primary Consumer**: Identify the primary process driving disk operations, PID, and disk read/write activity. If the process has a thread count present, display it directly under the metric.
   3. **Correlate Service Events**: Trace back the specific service event, file operation, or logging activity from the service logs corresponding to that timestamp.
@@ -91,7 +91,7 @@ JSON ecosystem block for healthy state:
 }
 ```
 
-### B. When There ARE Issues / Causes (Elevated State >= 70%)
+### B. When There ARE Issues / Causes (Elevated State >= 70%, >= 90%, or 100%)
 Your response must include a top-level string field `disk_analysis` formatted strictly as:
 
 ```text
@@ -156,4 +156,4 @@ JSON ecosystem block for issue state:
 
 ## 4. Remediation Plan Policies
 - **Zero-Plan Rule for No Issues**: When disk utilization is healthy / no issues (< 70%), `remediation_plans` must be strictly empty (`[]`).
-- **Threshold Rule**: Remediation plans are only generated when disk utilization reaches or exceeds threshold levels (>= 70%).
+- **Threshold Rule**: Remediation plans are only generated when disk utilization reaches or exceeds threshold levels (>= 70%, >= 90%, or 100%).

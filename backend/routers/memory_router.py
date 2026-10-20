@@ -19,7 +19,7 @@ def analyze_memory_latest_history():
     Direct Memory Agent Endpoint:
     1. Calls http://20.15.164.79:8080/api/metrics to ingest live current memory data, plus 5 recordings from /api/history.
     2. Runs LLM-powered Detection -> Diagnosis -> Remediation on Memory data.
-    3. Evaluates the highest threshold exceeded (50%, 70%, or 100%).
+    3. Evaluates the highest threshold exceeded (70%, 90%, or 100%).
     4. Dispatches a single alert email via Nodemailer to sirivennelanarava@gmail.com with the highest limit details.
     5. Returns detection, root cause, and remediation.
     """

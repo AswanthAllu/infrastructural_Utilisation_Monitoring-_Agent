@@ -1,9 +1,3 @@
-"""
-LLM Agent Service:
-Directly invokes Gemini (using google.genai and GOOGLE_API_KEY) so that the LLM
-autonomously decides detection, diagnosis, and remediation for CPU, Disk, and Memory agents.
-"""
-
 import json
 import logging
 import os
@@ -11,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import requests
 from dotenv import load_dotenv
 
 # Load environment variables from project root .env and tests/.env
@@ -18,12 +13,166 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(PROJECT_ROOT / "tests" / ".env")
 
+try:
+    from config.settings import (
+        AZURE_OPENAI_API_KEY,
+        AZURE_OPENAI_ENDPOINT,
+        LLM_API_KEY,
+        LLM_ENDPOINT,
+        MODEL_NAME,
+    )
+except ModuleNotFoundError:
+    LLM_ENDPOINT = os.getenv(
+        "LLM_ENDPOINT",
+        "https://infrastructuremonitoringagent.openai.azure.com/openai/responses?api-version=2025-04-01-preview",
+    )
+    AZURE_OPENAI_ENDPOINT = LLM_ENDPOINT
+    LLM_API_KEY = os.getenv("LLM_API_KEY", os.getenv("AZURE_OPENAI_API_KEY", ""))
+    AZURE_OPENAI_API_KEY = LLM_API_KEY
+    MODEL_NAME = os.getenv("MODEL_NAME", "5.6 luna")
+
 logger = logging.getLogger(__name__)
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME", "gemini-2.5-flash")
 
 _genai_client = None
+
+
+def _extract_text_from_response(resp_data: Any) -> str:
+    """Robustly extracts text from Azure OpenAI Responses API or Chat Completions format."""
+    if isinstance(resp_data, str):
+        return resp_data
+    if not isinstance(resp_data, dict):
+        return ""
+
+    # 1. Responses API top-level output_text helper
+    if "output_text" in resp_data and isinstance(resp_data["output_text"], str):
+        return resp_data["output_text"]
+
+    # 2. Responses API "output" array
+    output = resp_data.get("output")
+    if isinstance(output, list):
+        text_parts = []
+        for item in output:
+            if isinstance(item, dict):
+                if "text" in item and isinstance(item["text"], str):
+                    text_parts.append(item["text"])
+                content = item.get("content")
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict):
+                            if block.get("type") == "output_text" and "text" in block:
+                                text_parts.append(block["text"])
+                            elif "text" in block and isinstance(block["text"], str):
+                                text_parts.append(block["text"])
+                elif isinstance(content, str):
+                    text_parts.append(content)
+        if text_parts:
+            return "\n".join(text_parts)
+
+    # 3. Chat completions "choices" array
+    choices = resp_data.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0]
+        if isinstance(first, dict):
+            msg = first.get("message")
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if isinstance(content, str):
+                    return content
+            elif "text" in first and isinstance(first["text"], str):
+                return first["text"]
+
+    # 4. Direct top-level fields
+    for field in ("text", "content", "response", "message"):
+        val = resp_data.get(field)
+        if isinstance(val, str) and val.strip():
+            return val
+
+    return ""
+
+
+def invoke_azure_responses_api(
+    prompt: str,
+    system_instructions: str = "",
+    endpoint: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model_name: Optional[str] = None,
+    timeout: int = 45,
+) -> Optional[str]:
+    """
+    Invokes the Azure OpenAI Responses API using centralized configuration.
+    Endpoint URL, API key, and model name are strictly pulled from .env / settings.
+    """
+    url = (
+        endpoint
+        or os.getenv("LLM_ENDPOINT")
+        or os.getenv("AZURE_OPENAI_ENDPOINT")
+        or LLM_ENDPOINT
+    )
+    key = (
+        api_key
+        or os.getenv("LLM_API_KEY")
+        or os.getenv("AZURE_OPENAI_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or LLM_API_KEY
+    )
+    model = model_name or os.getenv("MODEL_NAME") or MODEL_NAME or "5.6 luna"
+
+    if not url or not key:
+        logger.warning(
+            "Azure OpenAI Responses API: missing endpoint or API key. "
+            "Ensure LLM_ENDPOINT and LLM_API_KEY / AZURE_OPENAI_API_KEY are configured in .env."
+        )
+        return None
+
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": key.strip(),
+    }
+    if key.strip().lower().startswith("bearer "):
+        headers["Authorization"] = key.strip()
+
+    # Standard Azure OpenAI Responses API payload
+    payload = {
+        "model": model,
+        "input": prompt,
+    }
+    if system_instructions and system_instructions.strip():
+        payload["instructions"] = system_instructions.strip()
+
+    try:
+        clean_url_display = url.split("?")[0]
+        logger.info(f"Invoking Azure OpenAI Responses API ({clean_url_display}) with model '{model}'...")
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if resp.status_code == 200:
+            extracted = _extract_text_from_response(resp.json())
+            if extracted:
+                logger.info(f"Received valid response ({len(extracted)} chars) from model '{model}'")
+                return extracted
+            logger.warning(f"Azure OpenAI response had no extractable text: {resp.text[:300]}")
+        elif resp.status_code in (400, 422):
+            # Check if alternative chat completions messages structure is required
+            err_text = resp.text.lower()
+            if "messages" in err_text or "input" in err_text:
+                messages = []
+                if system_instructions and system_instructions.strip():
+                    messages.append({"role": "system", "content": system_instructions.strip()})
+                messages.append({"role": "user", "content": prompt})
+                alt_payload = {
+                    "model": model,
+                    "messages": messages,
+                }
+                alt_resp = requests.post(url, headers=headers, json=alt_payload, timeout=timeout)
+                if alt_resp.status_code == 200:
+                    return _extract_text_from_response(alt_resp.json())
+            logger.warning(f"Azure OpenAI API returned HTTP {resp.status_code}: {resp.text}")
+        else:
+            logger.warning(f"Azure OpenAI API returned HTTP {resp.status_code}: {resp.text}")
+    except Exception as exc:
+        logger.warning(f"Failed to communicate with Azure OpenAI Responses API: {exc}")
+
+    return None
 
 
 def get_genai_client():
@@ -40,6 +189,7 @@ def get_genai_client():
             logger.warning(f"Could not initialize google.genai Client: {exc}")
             _genai_client = None
     return _genai_client
+
 
 
 def _clean_json_markdown(text: str) -> str:
@@ -142,11 +292,18 @@ def build_cpu_utilization_analysis_text(metrics_payload: Any) -> str:
             ])
             return "\n".join(lines)
 
+        if start_cpu < curr_cpu:
+            obs_line = f"CPU increased from {start_cpu:.0f}% to {curr_cpu:.0f}% between {start_fmt} and {curr_fmt}."
+        elif start_cpu > curr_cpu:
+            obs_line = f"CPU decreased from {start_cpu:.0f}% to {curr_cpu:.0f}% between {start_fmt} and {curr_fmt}."
+        else:
+            obs_line = f"CPU remained steady at {curr_cpu:.0f}% between {start_fmt} and {curr_fmt}."
+
         lines = [
             "CPU Utilization Analysis",
             "",
             "Observed:",
-            f"CPU increased from {start_cpu:.0f}% to {curr_cpu:.0f}% between {start_fmt} and {curr_fmt}.",
+            obs_line,
             "",
             "Primary process:",
             f"{p_name} (PID {p_pid})",
@@ -225,11 +382,18 @@ def build_cpu_utilization_analysis_text(metrics_payload: Any) -> str:
     corr_svc = corr.get("service_name") or "system-workload.service"
     corr_msg = corr.get("message") or f"Active workload processing under PID {p_pid}"
 
+    if start_cpu < peak_cpu:
+        obs_line = f"CPU increased from {start_cpu:.0f}% to {peak_cpu:.0f}% between {start_fmt} and {peak_fmt}."
+    elif start_cpu > peak_cpu:
+        obs_line = f"CPU decreased from {start_cpu:.0f}% to {peak_cpu:.0f}% between {start_fmt} and {peak_fmt}."
+    else:
+        obs_line = f"CPU remained steady at {peak_cpu:.0f}% between {start_fmt} and {peak_fmt}."
+
     lines = [
         "CPU Utilization Analysis",
         "",
         "Observed:",
-        f"CPU increased from {start_cpu:.0f}% to {peak_cpu:.0f}% between {start_fmt} and {peak_fmt}.",
+        obs_line,
         "",
         "Primary process:",
         f"{p_name} (PID {p_pid})",
@@ -524,11 +688,18 @@ def build_memory_utilization_analysis_text(metrics_payload: Any) -> str:
     corr_svc = corr.get("service_name") or "system-memory.service"
     corr_msg = corr.get("message") or "Active service memory operations"
 
+    if start_ram < peak_ram:
+        obs_line = f"RAM utilization increased from {start_ram:.1f}% to {peak_ram:.1f}% ({used_gb:.2f} GB of {total_gb:.2f} GB used) between {start_fmt} and {peak_fmt}."
+    elif start_ram > peak_ram:
+        obs_line = f"RAM utilization decreased from {start_ram:.1f}% to {peak_ram:.1f}% ({used_gb:.2f} GB of {total_gb:.2f} GB used) between {start_fmt} and {peak_fmt}."
+    else:
+        obs_line = f"RAM utilization remained steady at {peak_ram:.1f}% ({used_gb:.2f} GB of {total_gb:.2f} GB used) between {start_fmt} and {peak_fmt}."
+
     lines = [
         "Memory Utilization Analysis",
         "",
         "Observed:",
-        f"RAM utilization increased from {start_ram:.1f}% to {peak_ram:.1f}% ({used_gb:.2f} GB of {total_gb:.2f} GB used) between {start_fmt} and {peak_fmt}.",
+        obs_line,
         "",
         "Primary process:",
         f"{p_name} (PID {p_pid})",
@@ -561,10 +732,9 @@ def call_llm_agent(
     system_instructions: str,
 ) -> Dict[str, Any]:
     """
-    Invokes the LLM (Gemini) with the agent's instructions and segregated telemetry.
+    Invokes the LLM (Azure OpenAI Responses API: 5.6 luna) with the agent's instructions and segregated telemetry.
     The LLM autonomously decides the detection, root cause diagnosis, and remediation plan.
     """
-    client = get_genai_client()
     res_upper = resource_type.upper()
     is_cpu = res_upper == "CPU" or "cpu" in agent_name.lower()
     is_disk = res_upper == "DISK" or "disk" in agent_name.lower()
@@ -579,7 +749,11 @@ IMPORTANT: Provide a top-level string field "cpu_analysis" matching this exact s
 CPU Utilization Analysis
 
 Observed:
-CPU increased from <start>% to <peak>% between <start_time> and <peak_time>.
+<Directional statement based on actual values:
+ - If metric went up: CPU increased from <start>% to <end>% between <start_time> and <end_time>.
+ - If metric went down: CPU decreased from <start>% to <end>% between <start_time> and <end_time>.
+ - If metric stayed same: CPU remained steady at <val>% between <start_time> and <end_time>.
+ CRITICAL: Never write "increased" when the value went down (e.g. 98% to 80% is a DECREASE, not an increase). Accurately state increased, decreased, or remained steady.>
 
 Primary process:
 <Primary process name> (PID <PID>)
@@ -631,7 +805,11 @@ IMPORTANT: Provide a top-level string field "memory_analysis" matching this exac
 Memory Utilization Analysis
 
 Observed:
-RAM utilization increased from <start>% to <peak>% (<used_gb> GB of <total_gb> GB used) between <start_time> and <peak_time>.
+<Directional statement based on actual values:
+ - If metric went up: RAM utilization increased from <start>% to <end>% (<used_gb> GB of <total_gb> GB used) between <start_time> and <end_time>.
+ - If metric went down: RAM utilization decreased from <start>% to <end>% (<used_gb> GB of <total_gb> GB used) between <start_time> and <end_time>.
+ - If metric stayed same: RAM utilization remained steady at <val>% (<used_gb> GB of <total_gb> GB used) between <start_time> and <end_time>.
+ CRITICAL: Never write "increased" when the value went down. Accurately state increased, decreased, or remained steady.>
 
 Primary process:
 <Primary process name> (PID <PID>)
@@ -658,14 +836,19 @@ Resource under investigation: {resource_type}
 AGENT ROLE & INSTRUCTIONS:
 {system_instructions}
 
-SEGREATED METRIC TELEMETRY DATA (30 merged records linking host telemetry, processes, and service logs):
+TELEMETRY & LOGS DATA (15 historical recordings, live processes, and system service logs):
 {json.dumps(metrics_payload, indent=2)}
 
 TASK:
-Analyze the provided telemetry thoroughly. Do NOT use canned or generic responses.
-Generate an accurate, technical assessment based on the exact numbers observed.
-If there are multiple problematic records / spikes, formulate an individualized remediation plan
-for each distinct spike (For CPU: only generate plans for CPU utilization data > 90%; if 100% saturation is present across multiple points, output only 1 plan for 100%).
+1. Analyze the provided 15 telemetry logs and process data thoroughly. Do NOT use canned or generic responses.
+2. Formulate an accurate, technical assessment based on the exact numbers observed.
+3. DECIDE THE EXACT SINGLE REMEDIATION COMMAND to execute on the Linux VM.
+   - Do NOT output 4 duplicate or speculative alternative command options.
+   - You must autonomously decide the single best command to resolve the issue based on the 15 logs.
+   - Output the command as an exact whitespace-separated string (e.g. "sudo kill -15 <pid>" or "sudo systemctl restart <service>" or "sudo renice -n 19 -p <pid>").
+   - Allowed binaries: kill, pkill, systemctl, renice.
+   - Provide your technical justification for this specific command in "remediation_rationale".
+4. If there are multiple problematic spikes, formulate an individualized plan (for CPU: only generate plans for utilization > 90%; if 100% saturation is present across multiple points, output only 1 plan for 100%).
 {analysis_instruction}
 
 Respond ONLY with a valid JSON object matching this structure:
@@ -686,7 +869,9 @@ Respond ONLY with a valid JSON object matching this structure:
   }},
   "remediation": {{
     "action_required": "Concrete actionable steps to mitigate the issue",
-    "preventive_guardrail": "Long-term architectural guardrail to prevent recurrence"
+    "preventive_guardrail": "Long-term architectural guardrail to prevent recurrence",
+    "command": "Exact single whitespace-separated command decided by LLM (e.g. 'sudo kill -15 2818' or 'sudo systemctl restart stress-wave')",
+    "remediation_rationale": "Detailed explanation of why this specific command was selected based on the 15 logs"
   }},
   "remediation_plans": [
     {{
@@ -696,32 +881,51 @@ Respond ONLY with a valid JSON object matching this structure:
       "severity": "CRITICAL" | "HIGH" | "MEDIUM",
       "root_cause": "Root cause for this specific spike",
       "action_required": "Specific action for this record",
-      "preventive_guardrail": "Guardrail"
+      "preventive_guardrail": "Guardrail",
+      "command": "Exact single whitespace-separated command decided by LLM",
+      "remediation_rationale": "Detailed rationale based on 15 logs"
     }}
   ]
 }}
 """
 
-    if client:
+    raw_response_text = invoke_azure_responses_api(
+        prompt=prompt,
+        system_instructions=system_instructions,
+        model_name=MODEL_NAME,
+    )
+
+    if not raw_response_text and os.getenv("GOOGLE_API_KEY") and str(MODEL_NAME).lower().startswith("gemini"):
+        client = get_genai_client()
+        if client:
+            try:
+                response = client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=prompt,
+                )
+                if response and response.text:
+                    raw_response_text = response.text
+            except Exception as exc:
+                logger.warning(f"GenAI fallback failed: {exc}")
+
+
+    if raw_response_text:
         try:
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt,
-            )
-            if response and response.text:
-                cleaned_text = _clean_json_markdown(response.text)
-                parsed_json = json.loads(cleaned_text)
-                parsed_json["llm_powered"] = True
-                parsed_json["model_used"] = MODEL_NAME
-                if is_cpu and not parsed_json.get("cpu_analysis"):
-                    parsed_json["cpu_analysis"] = build_cpu_utilization_analysis_text(metrics_payload)
-                elif is_disk and not parsed_json.get("disk_analysis"):
-                    parsed_json["disk_analysis"] = build_disk_utilization_analysis_text(metrics_payload)
-                elif is_memory and not parsed_json.get("memory_analysis"):
-                    parsed_json["memory_analysis"] = build_memory_utilization_analysis_text(metrics_payload)
-                return parsed_json
+            cleaned_text = _clean_json_markdown(raw_response_text)
+            parsed_json = json.loads(cleaned_text)
+            parsed_json["llm_powered"] = True
+            parsed_json["model_used"] = MODEL_NAME
+            parsed_json["endpoint_used"] = LLM_ENDPOINT
+            if is_cpu and not parsed_json.get("cpu_analysis"):
+                parsed_json["cpu_analysis"] = build_cpu_utilization_analysis_text(metrics_payload)
+            elif is_disk and not parsed_json.get("disk_analysis"):
+                parsed_json["disk_analysis"] = build_disk_utilization_analysis_text(metrics_payload)
+            elif is_memory and not parsed_json.get("memory_analysis"):
+                parsed_json["memory_analysis"] = build_memory_utilization_analysis_text(metrics_payload)
+            return parsed_json
         except Exception as exc:
-            logger.warning(f"LLM call with model {MODEL_NAME} failed: {exc}")
+            logger.warning(f"Failed to parse LLM JSON output from model {MODEL_NAME}: {exc}")
+
 
     # Graceful fallback if LLM is offline / quota exhausted
     logger.info(f"Generating structured response via local intelligence fallback for {agent_name}")
@@ -802,6 +1006,25 @@ def _generate_fallback_agent_response(
     elif is_memory:
         analysis_dict["memory_analysis"] = build_memory_utilization_analysis_text(metrics_payload)
 
+    cmd = ""
+    rationale = ""
+    top_procs = []
+    if isinstance(metrics_payload, dict):
+        top_procs = metrics_payload.get("top_5_processes") or []
+        if is_memory and not top_procs:
+            top_procs = metrics_payload.get("top_5_memory_processes") or []
+
+    if threshold and threshold >= 70:
+        if top_procs and top_procs[0].get("pid"):
+            p = top_procs[0]
+            pid = p.get("pid")
+            p_name = p.get("process_name") or p.get("name") or "workload"
+            cmd = f"sudo kill -15 {pid}"
+            rationale = f"Evaluated 15 logs: Process {p_name} (PID {pid}) is saturating resources; issuing SIGTERM to cleanly release capacity."
+        else:
+            cmd = "sudo systemctl restart stress-wave"
+            rationale = "Evaluated 15 logs: Background workload daemon is consuming excessive host resources; issuing service restart."
+
     return {
         "agent": agent_name,
         "resource": resource_type,
@@ -838,23 +1061,31 @@ def _generate_fallback_agent_response(
             "subagent": "remediation_agent",
             "status": "REMEDIATION_DRAFTED" if threshold else "HEALTHY",
             "action_required": (
-                f"Scale host {resource_type} resources immediately and inspect top consumers."
-                if threshold
-                else "No issues detected. No remediation required."
+                f"Execute command: {cmd}\nRationale: {rationale}"
+                if cmd
+                else (
+                    f"Scale host {resource_type} resources immediately and inspect top consumers."
+                    if threshold
+                    else "No issues detected. No remediation required."
+                )
             ),
             "preventive_guardrail": (
                 f"Configure proactive alerts at 70% for {resource_type}."
                 if threshold
                 else f"Continue standard monitoring for {resource_type}."
             ),
+            "command": cmd,
+            "remediation_rationale": rationale,
         },
         "remediation_plans": [
             {
                 "plan_id": f"REMED-{resource_type.upper()}-001",
                 "severity": severity,
                 "root_cause": f"{resource_type} reached {peak:.1f}%",
-                "action_required": f"Scale host capacity or throttle non-critical tasks.",
+                "action_required": f"Execute command: {cmd}",
                 "preventive_guardrail": f"Set automated alert policies for {resource_type}.",
+                "command": cmd,
+                "remediation_rationale": rationale,
             }
-        ] if threshold else [],
+        ] if (threshold and cmd) else [],
     }

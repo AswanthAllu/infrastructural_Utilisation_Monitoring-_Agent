@@ -1,20 +1,28 @@
 import React, { useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
+  CheckCircle,
   Play,
   RefreshCw,
   Server,
+  Sparkles,
+  Terminal,
+  XCircle,
 } from 'lucide-react';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
 import { RemediationList } from '../common/RemediationList';
+import { RemediationReviewCard } from '../common/RemediationReviewCard';
 import type { AgentAnalysisResponse } from '../../types';
+import { apiService } from '../../api/service';
 
 interface CpuScreenProps {
   data: AgentAnalysisResponse | null;
   isLoading: boolean;
   onRunAnalysis: (customInput?: string) => void;
   lastUpdated?: string;
+  onNavigateToHistory?: () => void;
 }
 
 export const CpuScreen: React.FC<CpuScreenProps> = ({
@@ -22,9 +30,96 @@ export const CpuScreen: React.FC<CpuScreenProps> = ({
   isLoading,
   onRunAnalysis,
   lastUpdated: _lastUpdated,
+  onNavigateToHistory,
 }) => {
   const [customCsvInput, setCustomCsvInput] = useState('');
   const [showInputBox] = useState(false);
+  const [actionStatuses, setActionStatuses] = useState<
+    Record<
+      string,
+      {
+        status: 'PENDING' | 'EXECUTING' | 'EXECUTED' | 'REJECTED' | 'FAILED';
+        message?: string;
+        command?: string;
+        target?: string;
+        actionType?: string;
+        details?: Record<string, any>;
+        timestamp?: string;
+      }
+    >
+  >({});
+
+  const handleRemediationDecision = async (
+    planId: string,
+    serviceName: string,
+    actionRequired: string,
+    decision: 'APPROVE' | 'REJECT',
+    planObj?: any,
+    selectedOption?: any
+  ) => {
+    setActionStatuses((prev) => ({
+      ...prev,
+      [planId]: { status: decision === 'APPROVE' ? 'EXECUTING' : 'REJECTED' },
+    }));
+
+    try {
+      const command = (planObj?.command || selectedOption?.command || '').trim();
+      let targetId = planObj?.target_identifier || selectedOption?.target_identifier || serviceName;
+      let actionType = planObj?.action_type || selectedOption?.action_type || 'COMMAND';
+      let signal = selectedOption?.signal || 15;
+
+      if (!targetId) {
+        const pidMatch = actionRequired.match(/PID\s*(\d+)/i) || serviceName.match(/PID\s*(\d+)/i);
+        if (pidMatch) {
+          targetId = pidMatch[1];
+          actionType = 'KILL_PROCESS';
+        } else if (serviceName.toLowerCase().endsWith('.service') || !actionRequired.toLowerCase().includes('kill')) {
+          targetId = serviceName.replace(/\.service$/i, '').trim();
+          actionType = 'RESTART_SERVICE';
+        } else {
+          // If action says kill but no PID in text, look up matching PID from top_processes
+          const matchProc = data?.top_processes?.find(
+            (p) => (p.process_name || p.name || '').toLowerCase() === serviceName.toLowerCase()
+          ) || data?.top_processes?.[0];
+          targetId = matchProc?.pid ? String(matchProc.pid) : serviceName.replace(/\.service$/i, '').trim();
+          actionType = matchProc?.pid ? 'KILL_PROCESS' : 'RESTART_SERVICE';
+        }
+      }
+
+      const result = await apiService.submitRemediationDecision({
+        action_id: planId,
+        decision,
+        action_type: actionType,
+        target_identifier: String(targetId),
+        process_name: serviceName,
+        command: command,
+        signal,
+        operator_email: 'operator@dashboard',
+        operator_note: `Action submitted via HITL dashboard at ${new Date().toLocaleTimeString()}`,
+      });
+
+      setActionStatuses((prev) => ({
+        ...prev,
+        [planId]: {
+          status: result.status,
+          message: result.message || (result.success ? 'Executed successfully on VM' : 'Execution failed'),
+          command: result.command || command || selectedOption?.command || (result.details as any)?.command,
+          target: String(targetId),
+          actionType: actionType,
+          details: result.details,
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      }));
+    } catch (err: any) {
+      setActionStatuses((prev) => ({
+        ...prev,
+        [planId]: {
+          status: 'FAILED',
+          message: err.message || 'Execution error over SSH',
+        },
+      }));
+    }
+  };
 
   const currentUsageVal =
     data?.current_usage_percent ?? (data?.metrics_analyzed?.current_value ?? 0);
@@ -47,9 +142,9 @@ export const CpuScreen: React.FC<CpuScreenProps> = ({
               </span>
             )}
           </div> */}
-          <h2 className="mt-1 font-heading text-xl font-bold text-foreground">
+          {/* <h2 className="mt-1 font-heading text-xl font-bold text-foreground">
             CPU Utilization Agent
-          </h2>
+          </h2> */}
         </div>
 
         <div className="flex items-center gap-2">
@@ -150,7 +245,7 @@ export const CpuScreen: React.FC<CpuScreenProps> = ({
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              {data?.data_source || 'Live telemetry via /api/metrics & timestamp-filtered latest 5 recordings.'}
+              {data?.data_source }
             </p>
           </div>
 
@@ -319,14 +414,14 @@ export const CpuScreen: React.FC<CpuScreenProps> = ({
       )} */}
 
       {/* Deep Telemetry Analysis & Host Processes */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 w-full max-w-full">
         {data?.cpu_utilization_analysis && (
           <Card
             title="Telemetry Utilization Analysis"
             subtitle="Preprocessed summary of core utilization & queue depth"
             action={<Badge variant="primary" size="sm">ANALYSIS SYNTHESIS</Badge>}
           >
-            <div className="rounded-[var(--radius-md)] border border-border bg-[#0B1220] p-3 text-[11px] font-mono text-[#E7EBF3] whitespace-pre-wrap leading-relaxed">
+            <div className="rounded-[var(--radius-md)] border border-border bg-[#0B1220] p-3 text-[11px] font-mono text-[#E7EBF3] whitespace-pre-wrap leading-relaxed w-full max-w-full max-h-[380px] overflow-y-auto">
               <div className="flex items-center gap-1.5 pb-2 text-[var(--primary)] border-b border-white/10 mb-2">
                 <Activity className="h-3.5 w-3.5" />
                 <span className="font-semibold">CPU Metric Assessment Summary</span>
@@ -341,8 +436,9 @@ export const CpuScreen: React.FC<CpuScreenProps> = ({
             title="Highest CPU Processes"
             subtitle="Processes utilizing significant CPU slots & execution cycles"
             action={<Badge variant="warning" size="sm">TOP {data.top_processes.length} TASKS</Badge>}
+            className="overflow-hidden"
           >
-            <div className="space-y-2">
+            <div className="space-y-2 w-full max-w-full max-h-[300px] overflow-y-auto pr-1 scrollbar-thin">
               {data.top_processes.map((proc, pIdx) => (
                 <div
                   key={pIdx}
@@ -403,6 +499,156 @@ export const CpuScreen: React.FC<CpuScreenProps> = ({
                     <RemediationList text={plan.preventive_guardrail} className="mt-0 text-[11px] text-[var(--status-success-text)]" />
                   </div>
                 )}
+
+                {/* Proposed SSH Command - Decided by LLM based on 15 logs */}
+                {(() => {
+                  const planIdKey = plan.plan_id || `PLAN-${planIdx + 1}`;
+                  const targetId = plan.target_identifier || (plan.action_required?.match(/PID\s*(\d+)/i)?.[1]) || plan.service_name;
+                  const isKill = plan.action_type === 'KILL_PROCESS' || Boolean(targetId && /^\d+$/.test(String(targetId)));
+                  const decidedCommand = plan.command || (isKill ? `sudo kill -15 ${targetId}` : `sudo systemctl restart ${targetId}`);
+
+                  const isExecuted = actionStatuses[planIdKey]?.status === 'EXECUTED';
+
+                  if (isExecuted) {
+                    return (
+                      <div className="mt-3">
+                        <RemediationReviewCard
+                          actionId={planIdKey}
+                          actionType={actionStatuses[planIdKey]?.actionType || plan.action_type || 'COMMAND'}
+                          target={actionStatuses[planIdKey]?.target || String(targetId) || plan.service_name}
+                          command={actionStatuses[planIdKey]?.command || decidedCommand}
+                          message={actionStatuses[planIdKey]?.message}
+                          details={actionStatuses[planIdKey]?.details}
+                          timestamp={actionStatuses[planIdKey]?.timestamp}
+                          onRerunAnalysis={() => onRunAnalysis()}
+                          onViewHistory={onNavigateToHistory}
+                          onReset={() =>
+                            setActionStatuses((prev) => ({
+                              ...prev,
+                              [planIdKey]: { status: 'PENDING' },
+                            }))
+                          }
+                        />
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="mt-3 space-y-3">
+                      {/* LLM Decision Rationale */}
+                      {plan.remediation_rationale && (
+                        <div className="flex items-start gap-2 p-2.5 rounded-[var(--radius-sm)] border border-[var(--primary)]/30 bg-[var(--primary)]/5 text-xs text-foreground">
+                          <Sparkles className="h-4 w-4 shrink-0 text-[var(--primary)] mt-0.5" />
+                          <div>
+                            <span className="font-semibold text-[11px] uppercase tracking-wider text-[var(--primary)]">
+                              LLM Decision (Evaluated from 15 Telemetry Logs):
+                            </span>
+                            <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                              {plan.remediation_rationale}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Proposed SSH Command Preview */}
+                      <div className="rounded-[var(--radius-sm)] border border-[#1E293B] bg-[#090D16] p-3 text-xs font-mono shadow-inner">
+                        <div className="flex items-center justify-between pb-1.5 border-b border-white/5 mb-2">
+                          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400">
+                            <Terminal className="h-3.5 w-3.5" /> Proposed SSH Command (on 20.15.164.79)
+                          </span>
+                          <span className="text-[10px] text-muted-foreground uppercase">
+                            Target: {targetId}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[#38BDF8] select-all bg-black/40 px-2.5 py-1.5 rounded border border-white/5 overflow-x-auto">
+                          <span className="text-muted-foreground select-none">$</span>
+                          <code className="font-bold">{decidedCommand}</code>
+                        </div>
+                      </div>
+
+                      {/* Human in the Loop (HITL) Action Controls */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                            <Terminal className="h-3 w-3 text-primary" /> HITL Gate:
+                          </span>
+                          {actionStatuses[planIdKey]?.status === 'REJECTED' && (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground">
+                              <XCircle className="h-3.5 w-3.5" /> Rejected by Operator
+                            </span>
+                          )}
+                          {actionStatuses[planIdKey]?.status === 'FAILED' && (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-destructive">
+                              <AlertTriangle className="h-3.5 w-3.5" /> Failed
+                            </span>
+                          )}
+                          {(!actionStatuses[planIdKey] ||
+                            actionStatuses[planIdKey].status === 'PENDING') && (
+                            <span className="text-xs text-amber-500 font-medium">Approval Required</span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {actionStatuses[planIdKey]?.status !== 'REJECTED' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleRemediationDecision(
+                                    planIdKey,
+                                    plan.service_name || 'VM Service',
+                                    plan.action_required || '',
+                                    'APPROVE',
+                                    { ...plan, command: decidedCommand }
+                                  )
+                                }
+                                disabled={actionStatuses[planIdKey]?.status === 'EXECUTING'}
+                                className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-50 transition-all cursor-pointer"
+                              >
+                                {actionStatuses[planIdKey]?.status === 'EXECUTING' ? (
+                                  <>
+                                    <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Running over SSH...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle className="h-3.5 w-3.5" /> Approve & Run via SSH
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleRemediationDecision(
+                                    planIdKey,
+                                    plan.service_name || 'VM Service',
+                                    plan.action_required || '',
+                                    'REJECT',
+                                    { ...plan, command: decidedCommand }
+                                  )
+                                }
+                                className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/50 cursor-pointer"
+                              >
+                                <XCircle className="h-3.5 w-3.5" /> Reject
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {actionStatuses[plan.plan_id || `PLAN-${planIdx + 1}`]?.status === 'FAILED' &&
+                  actionStatuses[plan.plan_id || `PLAN-${planIdx + 1}`]?.message && (
+                    <div className="mt-2 text-[11px] p-2.5 rounded font-mono border border-rose-500/30 bg-rose-500/10 text-rose-300">
+                      <div className="font-semibold pb-1 flex items-center gap-1">
+                        <Terminal className="h-3 w-3" /> VM Execution Error:
+                      </div>
+                      <div className="whitespace-pre-wrap">
+                        {actionStatuses[plan.plan_id || `PLAN-${planIdx + 1}`]?.message}
+                      </div>
+                    </div>
+                  )}
               </div>
             ))}
           </div>

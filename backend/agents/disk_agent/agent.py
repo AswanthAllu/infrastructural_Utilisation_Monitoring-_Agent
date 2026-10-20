@@ -1,158 +1,97 @@
 import csv
 import io
+import json
+import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-# Ensure project root is in sys.path so 'config', 'schemas', etc. can always be resolved
+# Ensure project root is in sys.path so 'config', 'schemas', 'tools', etc. can always be resolved
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-try:
-    from config.settings import MODEL_NAME
-except ModuleNotFoundError:
-    MODEL_NAME = os.getenv("MODEL_NAME", "gemini-3.6-flash")
-
 from google.adk.agents import Agent
 
+logger = logging.getLogger(__name__)
+
 INSTRUCTIONS_PATH = Path(__file__).parent / "instructions.md"
-DISK_AGENT_INSTRUCTION = INSTRUCTIONS_PATH.read_text(encoding="utf-8")
+DISK_AGENT_INSTRUCTION = INSTRUCTIONS_PATH.read_text(encoding="utf-8") if INSTRUCTIONS_PATH.exists() else "Autonomous Disk Agent"
+MODEL_NAME = os.getenv("MODEL_NAME", "gemini-2.5-flash")
 
 
-def parse_and_classify_disk_logs(csv_text: str) -> Dict[str, Any]:
+def analyze_disk_metrics(
+    disk_data: Optional[Union[str, Path, List[Dict[str, Any]], Dict[str, Any]]] = None,
+    recipient_email: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Parse BigQuery Disk and Storage logs CSV, detect unpartitioned full-table scans,
-    diagnose excessive storage bytes read, and generate remediation actions.
+    Autonomous VM-Level Disk & Storage Monitoring Tool:
+    1. Ingests host storage telemetry (/api/metrics, /api/history): used GB, free GB, total GB, disk percent.
+    2. Identifies processes with notable disk I/O or storage footprint (/api/processes).
+    3. Correlates system service logs (/api/service-logs): systemd journal storage, database, and logging events.
+    4. Evaluates storage capacity threshold tiers (70%, 90%, 100%).
+    5. Formulates AI-powered root-cause diagnosis and storage remediation actions (e.g., log rotation, cache purge, volume expansion).
     """
-    reader = csv.DictReader(io.StringIO(csv_text.strip()))
-    total_rows = 0
-    healthy_count = 0
-    incidents: List[Dict[str, Any]] = []
-    csv_rows: List[List[str]] = []
+    from tools.system_agent_pipeline import process_system_disk_metrics
+    return process_system_disk_metrics(source=disk_data, recipient_email=recipient_email)
 
-    for row in reader:
-        total_rows += 1
-        job_id = row.get("job_id", f"disk_job_{total_rows}").strip()
-        timestamp = row.get("timestamp", "").strip()
-        table_name = row.get("table_name", "unknown_table").strip()
-        
+
+def parse_and_classify_disk_logs(
+    data: Union[str, Dict[str, Any], List[Dict[str, Any]]],
+    recipient_email: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Entrypoint for Disk telemetry and logs ingestion.
+    Parses VM storage telemetry (JSON or CSV format) and delegates to the VM Disk pipeline.
+    """
+    # If passed as string, check if it's CSV
+    if isinstance(data, str) and not data.strip().startswith(("[", "{")):
         try:
-            bytes_processed = float(row.get("total_bytes_processed", 0))
-            bytes_billed = float(row.get("total_bytes_billed", bytes_processed))
-        except (ValueError, TypeError):
-            continue
+            reader = csv.DictReader(io.StringIO(data.strip()))
+            rows = list(reader)
+            if rows:
+                converted_items = []
+                for row in rows:
+                    used_gb = float(row.get("used_gb", row.get("total_bytes_processed", 0)) or 0)
+                    total_gb = float(row.get("total_gb", 100) or 100)
+                    if used_gb > total_gb and total_gb == 100:
+                        # Value was in bytes
+                        used_gb = round(used_gb / (1024 ** 3), 2)
+                        total_gb = max(round(used_gb * 1.25, 2), 100)
+                    free_gb = max(total_gb - used_gb, 0.0)
+                    percent = round((used_gb / total_gb) * 100, 1) if total_gb > 0 else 0.0
 
-        is_partitioned = str(row.get("is_partitioned", "false")).lower() in ["true", "1", "yes"]
-        partition_col = row.get("partition_column", "date_col").strip()
+                    converted_items.append({
+                        "timestamp": row.get("timestamp", ""),
+                        "hostname": row.get("hostname", "cpu-utilization-vm"),
+                        "disk": {
+                            "percent": percent,
+                            "used_gb": used_gb,
+                            "free_gb": free_gb,
+                            "total_gb": total_gb,
+                        },
+                        "uptime": row.get("uptime", ""),
+                    })
+                return analyze_disk_metrics(converted_items, recipient_email=recipient_email)
+        except Exception as exc:
+            logger.warning(f"Disk CSV parsing fallback encountered: {exc}")
 
-        # Healthy: low scan bytes (< 1 GB)
-        if bytes_processed < 1_000_000_000:
-            healthy_count += 1
-            continue
-
-        severity = "CRITICAL" if bytes_processed >= 10_000_000_000_000 else "HIGH"
-        detected_issue = (
-            f"Query scanned {bytes_processed / (1024**3):.2f} GB without efficient partition pruning "
-            f"on table {table_name}."
-        )
-        recommended_action = (
-            f"Add WHERE clause filter on partition column `{partition_col}` and cluster on "
-            f"high-cardinality join/filter keys."
-        )
-        preventive_guardrail = (
-            f"Enable require_partition_filter = TRUE on `{table_name}` and set maximum_bytes_billed."
-        )
-
-        incident = {
-            "job_id": job_id,
-            "incident_type": "MISSING_PARTITION_FILTER",
-            "table_name": table_name,
-            "severity": severity,
-            "detection": {
-                "detected": True,
-                "incident_type": "MISSING_PARTITION_FILTER",
-                "status": "DETECTED",
-                "severity": severity,
-                "confidence": 0.95,
-                "summary": f"Table scan of {bytes_processed / (1024**3):.2f} GB detected on {table_name}.",
-                "evidence": {
-                    "timestamp": timestamp,
-                    "table_name": table_name,
-                    "total_bytes_processed": bytes_processed,
-                    "is_partitioned": is_partitioned,
-                    "partition_column": partition_col,
-                },
-                "reasons": [f"Unpruned table scan exceeding storage budget: {bytes_processed:,.0f} bytes."],
-                "recommended_next_step": "DIAGNOSIS",
-            },
-            "diagnosis": {
-                "incident_type": "MISSING_PARTITION_FILTER",
-                "diagnosis_status": "CONFIRMED",
-                "root_cause": detected_issue,
-                "explanation": (
-                    f"Full table scan read {bytes_processed:,.0f} bytes directly from disk storage because "
-                    f"the partition filter was absent or unusable."
-                ),
-                "confidence": 0.95,
-                "severity": severity,
-                "action_category": "RECOMMENDATION_ONLY",
-                "recommended_action": recommended_action,
-                "investigation_evidence": {"total_bytes_processed": bytes_processed},
-                "safety_notes": ["No SQL was executed.", "No BigQuery resources were modified."],
-                "escalation_required": (severity == "CRITICAL"),
-                "escalation_reason": "Extreme disk scan volume" if severity == "CRITICAL" else None,
-            },
-            "remediation": {
-                "action_category": "RECOMMENDATION_ONLY",
-                "status": "REMEDIATION_DRAFTED",
-                "action_taken": "A partition pruning and storage optimization recommendation was prepared.",
-                "action_required": recommended_action,
-                "preventive_guardrail": preventive_guardrail,
-                "executed": False,
-                "verification_required": True,
-                "safety_notes": ["No SQL was executed.", "No BigQuery resources were modified."],
-                "metadata": {
-                    "incident_type": "MISSING_PARTITION_FILTER",
-                    "job_id": job_id,
-                    "table_name": table_name,
-                    "detected_issue": detected_issue,
-                    "recommended_action": recommended_action,
-                    "preventive_guardrail": preventive_guardrail,
-                },
-            },
-        }
-        incidents.append(incident)
-        csv_rows.append([job_id, timestamp, severity, str(bytes_processed), f'"{detected_issue}"', f'"{recommended_action}"', f'"{preventive_guardrail}"'])
-
-    csv_header = "job_id,timestamp,severity,total_bytes_processed,detected_issue,recommended_action,preventive_guardrail\n"
-    csv_body = "\n".join(",".join(r) for r in csv_rows)
-
-    return {
-        "success": True,
-        "metric_type": "BQ_DISK_USAGE",
-        "total_rows_processed": total_rows,
-        "healthy_queries_count": healthy_count,
-        "negative_incidents_count": len(incidents),
-        "incidents": incidents,
-        "disk_remediation_actions_csv": csv_header + (csv_body + "\n" if csv_body else ""),
-    }
+    return analyze_disk_metrics(data, recipient_email=recipient_email)
 
 
 disk_agent = Agent(
     name="disk_agent",
     model=MODEL_NAME,
     description=(
-        "Specialized BigQuery Storage and Disk Agent that analyzes disk and storage logs, "
-        "detects unpartitioned and inefficient table scans, diagnoses storage I/O bottlenecks, "
-        "and recommends partition pruning and clustering remediations."
+        "Autonomous Disk Utilization & Storage Reliability Agent that inspects VM storage capacity, "
+        "monitors disk volume usage (used/free/total GB), tracks process I/O consumption, "
+        "correlates systemd journal logs, diagnoses storage exhaustion, and formulates remediation actions."
     ),
     instruction=DISK_AGENT_INSTRUCTION,
-    tools=[parse_and_classify_disk_logs],
+    tools=[analyze_disk_metrics],
 )
 
 root_agent = disk_agent
 
-__all__ = ["disk_agent", "root_agent", "parse_and_classify_disk_logs"]
-
+__all__ = ["disk_agent", "root_agent", "analyze_disk_metrics", "parse_and_classify_disk_logs"]

@@ -5,7 +5,24 @@ export type NavigationTab =
   | 'disk'
   | 'bigquery'
   | 'orchestrator'
-  | 'alerts';
+  | 'alerts'
+  | 'history';
+
+export interface RemediationAuditLog {
+  timestamp: string;
+  action_id: string;
+  operator: string;
+  action_type: string;
+  target: string;
+  command: string;
+  decision?: 'APPROVED' | 'REJECTED' | string;
+  status: 'EXECUTED' | 'REJECTED' | 'FAILED' | 'SUCCESS' | string;
+  exit_code?: number;
+  operator_note?: string;
+  output?: string;
+  stdout?: string;
+  stderr?: string;
+}
 
 export type Severity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -112,6 +129,15 @@ export interface CPURemediationResult {
   task_id?: string;
 }
 
+export interface RemediationAlternativeOption {
+  action_type: 'KILL_PROCESS' | 'RESTART_SERVICE' | 'RENICE_PROCESS' | string;
+  label: string;
+  command: string;
+  target_identifier: string;
+  signal?: number;
+  description?: string;
+}
+
 export interface RemediationPlanItem {
   plan_id?: string;
   service_name?: string;
@@ -120,6 +146,11 @@ export interface RemediationPlanItem {
   action_required?: string;
   preventive_guardrail?: string;
   memory_usage_percent?: number;
+  command?: string;
+  remediation_rationale?: string;
+  target_identifier?: string;
+  action_type?: 'KILL_PROCESS' | 'RESTART_SERVICE' | 'RENICE_PROCESS' | string;
+  alternatives?: RemediationAlternativeOption[];
 }
 
 export interface AgentAnalysisResponse {
@@ -212,19 +243,39 @@ export interface IncidentReviewResponse {
 }
 
 export interface EmailAlertRecord {
+  id?: number;
   timestamp: string;
   recipient: string;
   subject: string;
+  threshold?: number;
   threshold_level: string;
   metric_name: string;
   value: number;
-  status: 'SENT' | 'FAILED' | 'QUEUED';
+  status: 'SENT' | 'FAILED' | 'QUEUED' | string;
   details?: string;
 }
 
 export interface EmailAlertsResponse {
   total_alerts: number;
   alerts: EmailAlertRecord[];
+  filter_thresholds?: number[];
+}
+
+export interface AlertThresholdRule {
+  id: number;
+  resource: 'CPU' | 'RAM' | 'Disk' | 'ALL' | string;
+  threshold_percent: number;
+  severity: Severity | string;
+  recipient?: string;
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ThresholdRulesResponse {
+  success: boolean;
+  rules: AlertThresholdRule[];
+  distinct_thresholds: number[];
 }
 
 export interface OrchestratorAnalysisResponse {
@@ -243,4 +294,26 @@ export interface MetricsFetchResult {
   saved_file: string;
   filename: string;
   records_count: number;
+}
+
+export interface RemediationDecisionPayload {
+  action_id: string;
+  decision: 'APPROVE' | 'REJECT';
+  action_type: 'KILL_PROCESS' | 'RESTART_SERVICE' | 'RENICE_PROCESS' | string;
+  target_identifier: string;
+  process_name?: string;
+  signal?: number;
+  command?: string;
+  operator_email?: string;
+  operator_note?: string;
+}
+
+export interface RemediationDecisionResult {
+  success: boolean;
+  status: 'EXECUTED' | 'REJECTED' | 'FAILED';
+  action_id: string;
+  action_type?: string;
+  command?: string;
+  details?: Record<string, any>;
+  message: string;
 }

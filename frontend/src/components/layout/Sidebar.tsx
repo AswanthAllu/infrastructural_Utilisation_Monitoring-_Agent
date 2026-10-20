@@ -1,9 +1,11 @@
 import React from 'react';
 import {
+  Bell,
   ChevronLeft,
   ChevronRight,
   Cpu,
   HardDrive,
+  History,
   Layers,
   LayoutDashboard,
 } from 'lucide-react';
@@ -51,11 +53,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: 'RAM',
       desc: 'Heap & leak mitigation',
     },
+    {
+      id: 'alerts' as NavigationTab,
+      label: 'Alerts',
+      icon: Bell,
+      badge: 'Rules',
+      desc: 'Configurable thresholds',
+    },
+    {
+      id: 'history' as NavigationTab,
+      label: 'History',
+      icon: History,
+      badge: 'HITL',
+      desc: 'Approved & rejected actions',
+    },
   ];
 
   return (
     <aside
-      className={`relative flex flex-col border-r border-[var(--sidebar-border)] bg-[var(--sidebar)] text-[var(--sidebar-foreground)] transition-all duration-300 ease-in-out ${
+      className={`sticky top-0 h-screen shrink-0 z-30 flex flex-col border-r border-[var(--sidebar-border)] bg-[var(--sidebar)] text-[var(--sidebar-foreground)] transition-all duration-300 ease-in-out ${
         isCollapsed ? 'w-20' : 'w-64'
       }`}
     >

@@ -2,7 +2,6 @@ import React from 'react';
 import {
   AlertTriangle,
   ArrowRight,
-  CheckCircle2,
   Cpu,
   ExternalLink,
   HardDrive,
@@ -12,7 +11,6 @@ import {
 } from 'lucide-react';
 import { Card } from '../common/Card';
 import { Badge } from '../common/Badge';
-import { RemediationList } from '../common/RemediationList';
 import type {
   AgentAnalysisResponse,
   EmailAlertsResponse,
@@ -68,7 +66,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
     cpuData?.highest_threshold_exceeded ||
     (cpuData?.highest_threshold_crossed ? `${cpuData.highest_threshold_crossed}%` : null);
   const cpuDetection = cpuData?.detection;
-  const cpuRemediation = cpuData?.remediation;
 
   // Extract Disk Metrics
   const diskStats = diskData?.disk_stats;
@@ -85,7 +82,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
     diskData?.highest_threshold_exceeded ||
     (diskData?.highest_threshold_crossed ? `${diskData.highest_threshold_crossed}%` : null);
   const diskDetection = diskData?.detection;
-  const diskRemediation = diskData?.remediation;
 
   // Extract Memory Metrics
   const memEvidence = memoryData?.detection?.evidence as {
@@ -101,7 +97,6 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
     memoryData?.highest_threshold_exceeded ||
     (memoryData?.highest_threshold_crossed ? `${memoryData.highest_threshold_crossed}%` : null);
   const memDetection = memoryData?.detection;
-  const memRemediation = memoryData?.remediation;
 
   // Total alert count
   const alertCount = alertsData?.total_alerts ?? (alertsData?.alerts ? alertsData.alerts.length : 0);
@@ -170,7 +165,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
           className="group cursor-pointer rounded-[var(--radius-lg)] border border-border bg-card p-5 shadow-[var(--shadow-resting)] transition-all hover:-translate-y-0.5 hover:border-[var(--primary)]/50 hover:shadow-[var(--shadow-raised)]"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">CPU Slot Contention</span>
+            <span className="text-xs font-medium text-muted-foreground">CPU Utilization</span>
             <div className="rounded-[var(--radius-md)] bg-muted/40 p-2 text-foreground group-hover:bg-[var(--primary-tint)] group-hover:text-[var(--primary)] transition-colors">
               <Cpu className="h-4 w-4" />
             </div>
@@ -197,7 +192,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
           className="group cursor-pointer rounded-[var(--radius-lg)] border border-border bg-card p-5 shadow-[var(--shadow-resting)] transition-all hover:-translate-y-0.5 hover:border-[var(--primary)]/50 hover:shadow-[var(--shadow-raised)]"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Disk Volume /dev/sda1</span>
+            <span className="text-xs font-medium text-muted-foreground">Disk Utilization</span>
             <div className="rounded-[var(--radius-md)] bg-muted/40 p-2 text-foreground group-hover:bg-[var(--primary-tint)] group-hover:text-[var(--primary)] transition-colors">
               <HardDrive className="h-4 w-4" />
             </div>
@@ -224,7 +219,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
           className="group cursor-pointer rounded-[var(--radius-lg)] border border-border bg-card p-5 shadow-[var(--shadow-resting)] transition-all hover:-translate-y-0.5 hover:border-[var(--primary)]/50 hover:shadow-[var(--shadow-raised)]"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">RAM Pool Allocation</span>
+            <span className="text-xs font-medium text-muted-foreground">RAM Utilization</span>
             <div className="rounded-[var(--radius-md)] bg-muted/40 p-2 text-foreground group-hover:bg-[var(--primary-tint)] group-hover:text-[var(--primary)] transition-colors">
               <Layers className="h-4 w-4" />
             </div>
@@ -280,15 +275,15 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
             <ShieldCheck className="h-5 w-5 text-[var(--primary)]" />
             Agent Findings & Diagnosis
           </h3>
-          <span className="text-xs text-muted-foreground font-mono">
+          {/* <span className="text-xs text-muted-foreground font-mono">
             Cached telemetry state (re-runs on button trigger)
-          </span>
+          </span> */}
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Card 1: CPU Agent Card */}
           <Card
-            title="1. CPU Agent (Contention & Slots)"
+            title="1. CPU Agent"
             subtitle="Pipeline: Detection ➜ Diagnosis ➜ Remediation"
             action={
               <Badge variant="destructive" size="sm">
@@ -373,7 +368,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
               )}
 
               {/* Remediation Action */}
-              {cpuRemediation?.action_required &&(
+              {/* {cpuRemediation?.action_required &&(
               <div className="rounded-[var(--radius-md)] border border-border/60 bg-[var(--primary-tint)]/40 p-2.5 text-xs text-foreground space-y-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--primary)] flex items-center gap-1">
                   <CheckCircle2 className="h-3 w-3" />
@@ -381,13 +376,13 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
                 </span>
                 <RemediationList text={cpuRemediation?.action_required} className="text-[11px] text-muted-foreground" />
               </div>
-              )}
+              )} */}
             </div>
           </Card>
 
           {/* Card 2: Disk Agent Card */}
           <Card
-            title="2. Disk Agent (Storage & Retention)"
+            title="2. Disk Agent"
             subtitle="Pipeline: Detection ➜ Diagnosis ➜ Remediation"
             action={
               <Badge variant="warning" size="sm">
@@ -472,7 +467,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
               )}
 
               {/* Remediation Action */}
-              {diskRemediation?.action_required && (
+              {/* {diskRemediation?.action_required && (
               <div className="rounded-[var(--radius-md)] border border-border/60 bg-[var(--primary-tint)]/40 p-2.5 text-xs text-foreground space-y-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--primary)] flex items-center gap-1">
                   <CheckCircle2 className="h-3 w-3" />
@@ -480,13 +475,13 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
                 </span>
                 <RemediationList text={diskRemediation?.action_required} className="text-[11px] text-muted-foreground" />
               </div>
-              )}
+              )} */}
             </div>
           </Card>
 
           {/* Card 3: Memory Agent Card */}
           <Card
-            title="3. Memory Agent (RAM & Leak Profiler)"
+            title="3. Memory Agent"
             subtitle="Pipeline: Detection ➜ Diagnosis ➜ Remediation"
             action={
               <Badge variant="warning" size="sm">
@@ -520,7 +515,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
               {/* Progress gauge */}
               <div>
                 <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="font-medium text-foreground">Primary RAM Pool Usage</span>
+                  <span className="font-medium text-foreground">Primary RAM Usage</span>
                   <span
                     className="font-mono font-bold"
                     style={{ color: memCurrent >= 50 ? '#8B0000' : '#00AAE7' }}
@@ -571,7 +566,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
               )}
 
               {/* Remediation Action */}
-              {memRemediation?.action_required && (
+              {/* {memRemediation?.action_required && (
               <div className="rounded-[var(--radius-md)] border border-border/60 bg-[var(--primary-tint)]/40 p-2.5 text-xs text-foreground space-y-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--primary)] flex items-center gap-1">
                   <CheckCircle2 className="h-3 w-3" />
@@ -579,7 +574,7 @@ export const OverviewScreen: React.FC<OverviewScreenProps> = ({
                 </span>
                 <RemediationList text={memRemediation?.action_required} className="text-[11px] text-muted-foreground" />
               </div>
-              )}
+              )} */}
             </div>
           </Card>
         </div>

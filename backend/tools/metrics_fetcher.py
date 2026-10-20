@@ -56,33 +56,39 @@ def fetch_live_telemetry_unmerged(
         logger.warning(f"Could not fetch /api/metrics: {exc}")
         current_metrics = {}
 
-    # Fetch and filter latest 5 recordings from /api/history based on timestamp
+    # Fetch and filter latest 10 recordings directly in memory from /api/history based on timestamp
     try:
         history_list = fetch_metrics_history(f"{base_url}/api/history", timeout=timeout)
-        latest_5_recordings = filter_latest_records_by_timestamp(history_list, count=5)
+        latest_recordings = filter_latest_records_by_timestamp(history_list, count=15)
     except Exception as exc:
         logger.warning(f"Could not fetch /api/history: {exc}")
-        latest_5_recordings = [current_metrics] if current_metrics else []
+        latest_recordings = [current_metrics] if current_metrics else []
 
-    if not current_metrics and latest_5_recordings:
-        current_metrics = latest_5_recordings[-1]
+    if not current_metrics and latest_recordings:
+        current_metrics = latest_recordings[-1]
 
     # 2. Fetch processes from /api/processes -> top 5 processes (excluding System Idle Process)
     try:
         proc_data = fetch_current_metrics(f"{base_url}/api/processes", timeout=timeout)
         all_procs = proc_data.get("processes", [])
-        # Exclude PID 0 (System Idle Process) which represents unused/idle CPU on Windows
+        # Exclude PID <= 100, system idle, dashboard telemetry, and core protected system daemons
+        from services.ssh_remediation_service import PROTECTED_PROCESSES
         workload_procs = [
             p for p in all_procs
-            if p.get("pid") not in (0, "0", None) and str(p.get("process_name", "")).lower() != "system idle process"
+            if p.get("pid") is not None
+            and int(p.get("pid", 0) or 0) > 100
+            and str(p.get("process_name", "")).lower() != "system idle process"
+            and str(p.get("process_name", "")).lower() not in PROTECTED_PROCESSES
+            and str(p.get("name", "")).lower() not in PROTECTED_PROCESSES
+            and "dashboard.py" not in str(p.get("command_line", "")).lower()
         ]
         sorted_procs = sorted(workload_procs, key=lambda p: float(p.get("cpu_percent", 0.0)), reverse=True)
-        top_5_processes = sorted_procs[:5]
+        top_5_processes = sorted_procs[:15]
         top_5_memory_processes = sorted(
             workload_procs,
             key=lambda p: float(p.get("memory_percent", 0.0) or 0.0),
             reverse=True,
-        )[:5]
+        )[:15]
     except Exception as exc:
         logger.warning(f"Could not fetch /api/processes: {exc}")
         top_5_processes = []
@@ -99,7 +105,7 @@ def fetch_live_telemetry_unmerged(
             desc = s.get("Description", "")
             active_st = s.get("ActiveState", "active")
             raw_logs = s.get("Logs", [])
-            recent_5 = raw_logs[-5:] if len(raw_logs) >= 5 else raw_logs
+            recent_5 = raw_logs[-10:] if len(raw_logs) >= 5 else raw_logs
             if not recent_5:
                 continue
 
@@ -132,7 +138,8 @@ def fetch_live_telemetry_unmerged(
 
     bundle = {
         "current_metrics": current_metrics,
-        "latest_5_recordings": latest_5_recordings,
+        "latest_10_recordings": latest_recordings,
+        "latest_5_recordings": latest_recordings,  # Kept for backward compatibility
         "top_5_processes": top_5_processes,
         "top_5_memory_processes": top_5_memory_processes,
         "distinct_services_logs": distinct_services_logs,
@@ -143,15 +150,7 @@ def fetch_live_telemetry_unmerged(
         "hostname": current_metrics.get("hostname", "system-host"),
     }
 
-    try:
-        (target_dir / "latest_metrics.json").write_text(json.dumps(current_metrics, indent=2), encoding="utf-8")
-        (target_dir / "latest_5_recordings.json").write_text(json.dumps(latest_5_recordings, indent=2), encoding="utf-8")
-        (target_dir / "latest_processes_5.json").write_text(json.dumps(top_5_processes, indent=2), encoding="utf-8")
-        (target_dir / "latest_distinct_services_logs.json").write_text(json.dumps(distinct_services_logs, indent=2), encoding="utf-8")
-        (target_dir / "latest_service_logs_5.json").write_text(json.dumps(all_distinct_service_logs, indent=2), encoding="utf-8")
-    except Exception as exc:
-        logger.debug(f"Could not save unmerged telemetry cache: {exc}")
-
+    # Data is retained purely in-memory and passed directly to the agents without saving to local disk
     return bundle
 
 
